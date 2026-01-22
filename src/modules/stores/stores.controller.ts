@@ -1,0 +1,63 @@
+import { Controller, Post, Get, Patch, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { StoresService } from './stores.service';
+import { CreateStoreDto } from './dto/create-store.dto';
+import { UpdateStoreDto } from './dto/update-store.dto';
+import { AssignStaffDto } from './dto/assign-staff.dto';
+import { JwtGuard } from '../../common/guards/jwt.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { AuthUser } from '../auth/interface/auth-user.interface';
+
+// Buat interface lokal untuk Request yang terautentikasi
+interface AuthenticatedRequest extends Request {
+  user: AuthUser;
+}
+@Controller('stores')
+@UseGuards(JwtGuard, RolesGuard)
+export class StoresController {
+  constructor(private readonly storesService: StoresService) {}
+
+  @Post()
+  @Roles('owner')
+  async create(@Body() dto: CreateStoreDto, @Req() req: any) {
+    return this.storesService.create(dto, req.user.tenantId);
+  }
+
+  @Get()
+  @Roles('owner')
+  async findAll(@Req() req: any) {
+    return this.storesService.findAll(req.user.tenantId);
+  }
+
+  @Get('my-access')
+  @Roles('owner', 'manager', 'staff') // Bisa diakses keduanya
+  async getMyAccess(@Req() req: AuthenticatedRequest) {
+    console.log("req ",req.user);
+    
+    return this.storesService.getMyAccess(req.user);
+  }
+
+  @Get(':id')
+  @Roles('owner')
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    return this.storesService.findOne(id, req.user.tenantId);
+  }
+
+  @Patch(':id')
+  @Roles('owner')
+  async update(@Param('id') id: string, @Body() dto: UpdateStoreDto, @Req() req: any) {
+    return this.storesService.update(id, dto, req.user.tenantId);
+  }
+
+  @Delete(':id')
+  @Roles('owner')
+  async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.storesService.remove(id, req.user.tenantId);
+  }
+
+  @Post(':id/assign-staff')
+  @Roles('owner')
+  async assignStaff(@Param('id') id: string, @Body() dto: AssignStaffDto, @Req() req: any) {
+    return this.storesService.assignStaff(id, dto.user_id, req.user.tenantId);
+  }
+}

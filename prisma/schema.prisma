@@ -107,7 +107,7 @@ model stores {
   receipt_footer  String?
   is_active       Boolean?          @default(true)
   created_at      DateTime          @default(now()) @db.Timestamp(6)
-  updated_at      DateTime          @db.Timestamp(6)
+  updated_at      DateTime          @default(now()) @updatedAt
   inventory_stock inventory_stock[]
   tenants         tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
   transactions    transactions[]
@@ -182,7 +182,7 @@ model user_stores {
   store_id   String    @db.Uuid
   status     String    @default("active") @db.VarChar(20)
   created_at DateTime  @default(now()) @db.Timestamp(6)
-  updated_at DateTime
+  updated_at DateTime  @default(now()) @updatedAt
   deleted_at DateTime? @db.Timestamp(6)
   stores     stores    @relation(fields: [store_id], references: [id], onDelete: Cascade)
   users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
