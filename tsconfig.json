@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "module": "commonjs", // Ubah dari nodenext ke commonjs untuk stabilitas NestJS
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021", // Lebih stabil untuk Node.js versi sekarang
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true, // Sangat penting agar TS tidak mengecek error di library/generated
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": false,
+    "paths": {
+      "@prisma/client": ["generated/prisma"] 
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "generated"] 
+}
