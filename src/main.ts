@@ -33,4 +33,9 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`🚀 Kalnaf-coresys is running on: http://localhost:${port}/api`);
 }
+
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+
 bootstrap();

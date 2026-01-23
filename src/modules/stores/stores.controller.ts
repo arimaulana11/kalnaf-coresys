@@ -19,7 +19,7 @@ export class StoresController {
 
   @Post()
   @Roles('owner')
-  async create(@Body() dto: CreateStoreDto, @Req() req: any) {
+  async create(@Body() dto: CreateStoreDto, @Req() req: AuthenticatedRequest) {
     return this.storesService.create(dto, req.user.tenantId);
   }
 
@@ -32,20 +32,18 @@ export class StoresController {
   @Get('my-access')
   @Roles('owner', 'manager', 'staff') // Bisa diakses keduanya
   async getMyAccess(@Req() req: AuthenticatedRequest) {
-    console.log("req ",req.user);
-    
     return this.storesService.getMyAccess(req.user);
   }
 
   @Get(':id')
   @Roles('owner')
-  async findOne(@Param('id') id: string, @Req() req: any) {
+  async findOne(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.storesService.findOne(id, req.user.tenantId);
   }
 
   @Patch(':id')
   @Roles('owner')
-  async update(@Param('id') id: string, @Body() dto: UpdateStoreDto, @Req() req: any) {
+  async update(@Param('id') id: string, @Body() dto: UpdateStoreDto, @Req() req: AuthenticatedRequest) {
     return this.storesService.update(id, dto, req.user.tenantId);
   }
 
@@ -57,7 +55,7 @@ export class StoresController {
 
   @Post(':id/assign-staff')
   @Roles('owner')
-  async assignStaff(@Param('id') id: string, @Body() dto: AssignStaffDto, @Req() req: any) {
+  async assignStaff(@Param('id') id: string, @Body() dto: AssignStaffDto, @Req() req: AuthenticatedRequest) {
     return this.storesService.assignStaff(id, dto.user_id, req.user.tenantId);
   }
 }

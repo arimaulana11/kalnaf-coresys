@@ -5,6 +5,8 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { StoresModule } from './modules/stores/stores.module';
 // import { HealthModule } from './modules/health/health.module';
+import { CategoryModule } from './modules/category/category.module';
+import { ProductModule } from './modules/product/product.module';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 
@@ -19,6 +21,8 @@ import jwtConfig from './config/jwt.config';
     AuthModule,
     UsersModule,
     StoresModule,
+    CategoryModule,
+    ProductModule,
     // HealthModule,
   ],
 })
