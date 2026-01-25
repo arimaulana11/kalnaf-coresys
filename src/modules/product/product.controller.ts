@@ -8,7 +8,7 @@ import { AuthUser } from '../auth/interface/auth-user.interface';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { CreateVariantDto } from './dto/varian-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { UpdateVariantDto } from './dto/update-variant.dto';
+import { UpdateParcelDto, UpdateVariantDto } from './dto/update-variant.dto';
 import { ImportProductDto } from 'src/modules/product/dto/import-product.dto';
 import { VariantIdParamDto } from './dto/remove-variant.dto';
 import { ProductIdParamDto } from './dto/delete-product.dto';
@@ -63,6 +63,16 @@ export class ProductsController {
         @Request() req: AuthenticatedRequest,
     ) {
         return this.productsService.updateVariant(req.user.tenantId, id, dto);
+    }
+
+    @Patch('parcel/:variantId')
+    @Roles('owner')
+    async updateParcel(
+        @Req() req: AuthenticatedRequest,
+        @Param('variantId', ParseIntPipe) variantId: number,
+        @Body() dto: UpdateParcelDto
+    ) {
+        return this.productsService.updateParcelComponents(req.user.tenantId, variantId, dto);
     }
 
     @Post(':id/variants')

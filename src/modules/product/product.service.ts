@@ -4,7 +4,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductQueryDto } from './dto/query-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { UpdateVariantDto } from './dto/update-variant.dto';
+import { UpdateParcelDto, UpdateVariantDto } from './dto/update-variant.dto';
 import { CreateVariantDto } from './dto/varian-product.dto';
 import { ImportProductDto } from './dto/import-product.dto';
 
@@ -236,9 +236,19 @@ export class ProductsService {
     const product = await this.prisma.products.findFirst({
       where: { id, tenantId },
       include: {
-        productVariants: { include: { stocks: true } },
         productTaxes: { include: { taxes: true } },
-        categories: true
+        categories: true,
+        productVariants: {
+          include: {
+            stocks: true,
+            // TAMBAHKAN INI AGAR KOMPONEN PARCEL MUNCUL
+            bundleComponents: {
+              include: {
+                componentVariant: true // Mengambil detail produk yang ada di dalam paket
+              }
+            }
+          }
+        }
       }
     });
     if (!product) throw new NotFoundException('Product not found');
@@ -300,6 +310,50 @@ export class ProductsService {
     return this.prisma.product_variants.update({
       where: { id: variantId },
       data: { name: dto.name, sku: dto.sku, price: dto.price }
+    });
+  }
+
+  // src/modules/products/products.service.ts
+
+  async updateParcelComponents(tenantId: string, variantId: number, dto: UpdateParcelDto) {
+    // 1. Validasi kepemilikan variant melalui join ke product
+    const variant = await this.prisma.product_variants.findFirst({
+      where: {
+        id: variantId,
+        products: { tenantId: tenantId }
+      },
+      include: { products: true }
+    });
+
+    if (!variant) throw new NotFoundException('Varian produk tidak ditemukan');
+    if (variant.products.type !== 'PARCEL') {
+      throw new BadRequestException('Produk ini bukan bertipe PARCEL');
+    }
+
+    // 2. Jalankan transaksi untuk menghapus dan mengisi ulang komponen
+    return this.prisma.$transaction(async (tx) => {
+      // Hapus komponen lama berdasarkan parentVariantId
+      await tx.product_components.deleteMany({
+        where: { parentVariantId: variantId }
+      });
+
+      // Simpan komponen baru
+      const newComponents = await Promise.all(
+        dto.components.map((comp) =>
+          tx.product_components.create({
+            data: {
+              parentVariantId: variantId,
+              componentVariantId: comp.componentVariantId,
+              qty: comp.qty,
+            }
+          })
+        )
+      );
+
+      return {
+        message: 'Komponen parcel berhasil diperbarui',
+        count: newComponents.length
+      };
     });
   }
 
