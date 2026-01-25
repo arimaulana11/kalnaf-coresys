@@ -1,5 +1,4 @@
-// src/products/dto/import-product.dto.ts
-import { IsString, IsNumber, IsOptional, IsEnum, IsArray, ValidateNested, IsInt, Min } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsArray, ValidateNested, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProductType } from '@prisma/client';
 

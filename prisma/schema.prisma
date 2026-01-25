@@ -21,6 +21,8 @@ enum StockLogType {
   ADJUSTMENT
   RETURN
   WASTE
+  TRANSFER_IN   // Tambahkan ini
+  TRANSFER_OUT  // Tambahkan ini
 }
 
 enum TransactionSource {
