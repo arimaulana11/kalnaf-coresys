@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import cookieParser from 'cookie-parser';
+import { BigIntInterceptor } from './common/interceptors/bigint.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -15,6 +16,7 @@ async function bootstrap() {
 
   // 3. Global Interceptor (Bungkus response jadi {success, statusCode, data})
   app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(new BigIntInterceptor());
 
   // 4. Global Validation (Validasi DTO otomatis)
   app.useGlobalPipes(new ValidationPipe({

@@ -1,36 +1,69 @@
-import { IsString, IsNotEmpty, IsEnum, IsArray, ValidateNested, IsNumber, IsBoolean, IsOptional } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, ValidateNested, IsEnum, IsDateString, IsUUID, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ProductType } from '@prisma/client';
+import { CreateVariantDto } from './varian-product.dto'; // pastikan path benar
 
-class VariantDto {
-  @IsString() @IsNotEmpty() name: string;
-  @IsString() @IsNotEmpty() unit_name: string;
-  @IsNumber() multiplier: number;
-  @IsBoolean() is_base_unit: boolean;
-  @IsNumber() price: number;
-  @IsString() @IsNotEmpty() sku: string;
+class InitialStockDto {
+  @IsUUID('4', { message: 'storeId harus format UUID yang valid' })
+  storeId: string;
 
-  @IsArray()
+  @IsNumber()
+  qty: number;
+
+  @IsNumber()
+  purchasePrice: number;
+
   @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => ComponentDto)
-  components?: ComponentDto[];
-}
-
-class ComponentDto {
-  @IsNumber() component_variant_id: number;
-  @IsNumber() qty: number;
+  @IsDateString()
+  expiryDate?: string;
 }
 
 export class CreateProductDto {
-  @IsNumber() category_id: number;
-  @IsString() @IsNotEmpty() name: string;
-  @IsString() @IsOptional() description?: string;
-  
-  @IsEnum(['PHYSICAL', 'PARCEL'])
-  type: 'PHYSICAL' | 'PARCEL';
+  @IsNumber()
+  categoryId: number;
+
+  @IsString()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsEnum(ProductType)
+  type: ProductType; // PHYSICAL atau DIGITAL
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => VariantDto)
-  variants: VariantDto[];
+  @Type(() => CreateVariantDto)
+  variants: CreateVariantDto[];
+
+  // OPSI 1: Stok via Array (Beras Ramos Style)
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InitialStockDto)
+  initialStocks?: InitialStockDto[];
+
+  // OPSI 2: Metadata Stok Root (Sepatu Adidas Style)
+  // Digunakan bersama initialStock di dalam variants
+  @IsOptional()
+  @IsUUID()
+  storeId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  purchasePrice?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  taxIds?: number[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean; // Tambahkan baris ini
 }

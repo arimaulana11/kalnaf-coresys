@@ -1,6 +1,12 @@
 -- CreateEnum
 CREATE TYPE "ProductType" AS ENUM ('PHYSICAL', 'SERVICE', 'PARCEL', 'DIGITAL');
 
+-- CreateEnum
+CREATE TYPE "StockLogType" AS ENUM ('SALE', 'RESTOCK', 'ADJUSTMENT', 'RETURN', 'WASTE');
+
+-- CreateEnum
+CREATE TYPE "TransactionSource" AS ENUM ('OFFLINE_POS', 'SHOPEE', 'TOKOPEDIA', 'TIKTOK_SHOP');
+
 -- CreateTable
 CREATE TABLE "tenants" (
     "id" UUID NOT NULL,
@@ -38,8 +44,31 @@ CREATE TABLE "products" (
     "name" VARCHAR(100) NOT NULL,
     "description" TEXT,
     "type" "ProductType" NOT NULL DEFAULT 'PHYSICAL',
+    "image_url" TEXT,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "products_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "taxes" (
+    "id" SERIAL NOT NULL,
+    "tenant_id" UUID NOT NULL,
+    "name" VARCHAR(50) NOT NULL,
+    "rate" DOUBLE PRECISION NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "taxes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "product_taxes" (
+    "product_id" INTEGER NOT NULL,
+    "tax_id" INTEGER NOT NULL,
+
+    CONSTRAINT "product_taxes_pkey" PRIMARY KEY ("product_id","tax_id")
 );
 
 -- CreateTable
@@ -47,11 +76,13 @@ CREATE TABLE "product_variants" (
     "id" SERIAL NOT NULL,
     "product_id" INTEGER NOT NULL,
     "name" VARCHAR(100) NOT NULL,
-    "sku" VARCHAR(50),
+    "sku" VARCHAR(100),
     "unit_name" VARCHAR(20) NOT NULL,
     "multiplier" INTEGER NOT NULL DEFAULT 1,
     "is_base_unit" BOOLEAN NOT NULL DEFAULT false,
     "price" INTEGER NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "product_variants_pkey" PRIMARY KEY ("id")
 );
@@ -70,10 +101,36 @@ CREATE TABLE "product_components" (
 CREATE TABLE "inventory_stock" (
     "id" SERIAL NOT NULL,
     "store_id" UUID NOT NULL,
-    "product_id" INTEGER NOT NULL,
+    "variant_id" INTEGER NOT NULL,
     "stock_qty" BIGINT NOT NULL DEFAULT 0,
 
     CONSTRAINT "inventory_stock_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "stock_batches" (
+    "id" SERIAL NOT NULL,
+    "inventory_stock_id" INTEGER NOT NULL,
+    "batch_number" TEXT,
+    "qty" INTEGER NOT NULL,
+    "expiry_date" TIMESTAMP(3),
+    "purchase_price" INTEGER NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "stock_batches_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "inventory_logs" (
+    "id" SERIAL NOT NULL,
+    "inventory_stock_id" INTEGER NOT NULL,
+    "type" "StockLogType" NOT NULL,
+    "qty_change" INTEGER NOT NULL,
+    "reference_id" TEXT,
+    "notes" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "inventory_logs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -83,8 +140,11 @@ CREATE TABLE "transactions" (
     "store_id" UUID NOT NULL,
     "created_by" UUID NOT NULL,
     "customer_name" VARCHAR(100),
+    "customer_id" UUID,
     "total_amount" INTEGER NOT NULL,
     "transaction_date" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "source" "TransactionSource" NOT NULL DEFAULT 'OFFLINE_POS',
+    "metadata" JSONB,
 
     CONSTRAINT "transactions_pkey" PRIMARY KEY ("id")
 );
@@ -96,6 +156,7 @@ CREATE TABLE "transaction_items" (
     "product_variant_id" INTEGER NOT NULL,
     "qty" INTEGER NOT NULL,
     "unit_price" INTEGER NOT NULL,
+    "tax_amount" INTEGER NOT NULL DEFAULT 0,
     "subtotal" INTEGER NOT NULL,
 
     CONSTRAINT "transaction_items_pkey" PRIMARY KEY ("id")
@@ -201,13 +262,13 @@ CREATE INDEX "products_category_id_idx" ON "products"("category_id");
 CREATE UNIQUE INDEX "products_id_tenant_id_key" ON "products"("id", "tenant_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "product_variants_sku_key" ON "product_variants"("sku");
+CREATE INDEX "product_variants_sku_idx" ON "product_variants"("sku");
 
 -- CreateIndex
 CREATE INDEX "product_variants_product_id_idx" ON "product_variants"("product_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "inventory_stock_store_id_product_id_key" ON "inventory_stock"("store_id", "product_id");
+CREATE UNIQUE INDEX "inventory_stock_variant_id_store_id_key" ON "inventory_stock"("variant_id", "store_id");
 
 -- CreateIndex
 CREATE INDEX "transactions_created_by_idx" ON "transactions"("created_by");
@@ -252,6 +313,15 @@ ALTER TABLE "products" ADD CONSTRAINT "products_category_id_tenant_id_fkey" FORE
 ALTER TABLE "products" ADD CONSTRAINT "products_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "taxes" ADD CONSTRAINT "taxes_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_taxes" ADD CONSTRAINT "product_taxes_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "products"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_taxes" ADD CONSTRAINT "product_taxes_tax_id_fkey" FOREIGN KEY ("tax_id") REFERENCES "taxes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "product_variants" ADD CONSTRAINT "product_variants_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "products"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -261,10 +331,16 @@ ALTER TABLE "product_components" ADD CONSTRAINT "product_components_parent_varia
 ALTER TABLE "product_components" ADD CONSTRAINT "product_components_component_variant_id_fkey" FOREIGN KEY ("component_variant_id") REFERENCES "product_variants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "inventory_stock" ADD CONSTRAINT "inventory_stock_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "products"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "inventory_stock" ADD CONSTRAINT "inventory_stock_variant_id_fkey" FOREIGN KEY ("variant_id") REFERENCES "product_variants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "inventory_stock" ADD CONSTRAINT "inventory_stock_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "stores"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "stock_batches" ADD CONSTRAINT "stock_batches_inventory_stock_id_fkey" FOREIGN KEY ("inventory_stock_id") REFERENCES "inventory_stock"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "inventory_logs" ADD CONSTRAINT "inventory_logs_inventory_stock_id_fkey" FOREIGN KEY ("inventory_stock_id") REFERENCES "inventory_stock"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;

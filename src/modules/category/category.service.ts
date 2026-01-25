@@ -11,7 +11,7 @@ export class CategoryService {
   async search(tenantId: string, name?: string) {
     return this.prisma.categories.findMany({
       where: {
-        tenant_id: tenantId,
+        tenantId: tenantId,
         name: name 
           ? { contains: name, mode: 'insensitive' } 
           : undefined,
@@ -23,20 +23,20 @@ export class CategoryService {
     return this.prisma.categories.create({
       data: {
         ...dto,
-        tenant_id: tenantId,
+        tenantId: tenantId,
       },
     });
   }
 
   async findAll(tenantId: string) {
     return this.prisma.categories.findMany({
-      where: { tenant_id: tenantId },
+      where: { tenantId: tenantId },
     });
   }
 
   async findOne(id: number, tenantId: string) {
     const category = await this.prisma.categories.findFirst({
-      where: { id, tenant_id: tenantId },
+      where: { id, tenantId: tenantId },
     });
     if (!category) throw new NotFoundException('Category not found');
     return category;
