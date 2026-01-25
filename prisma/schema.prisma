@@ -68,6 +68,7 @@ model stores {
   transactions    transactions[]
   user_stores     user_stores[]
   tenants         tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  shifts       store_shifts[]
 
   @@unique([tenant_id, name])
 }
@@ -214,6 +215,21 @@ model inventory_logs {
 }
 
 // --- TRANSACTIONS ---
+model store_shifts {
+  id           String    @id @default(uuid())
+  // TAMBAHKAN @db.Uuid di sini
+  storeId      String    @db.Uuid 
+  // Jika userId di tabel users juga UUID, tambahkan @db.Uuid di sini:
+  userId       String    @db.Uuid 
+  
+  startTime    DateTime  @default(now())
+  endTime      DateTime?
+  startingCash Decimal   @db.Decimal(18, 2)
+  closingCash  Decimal?  @db.Decimal(18, 2)
+  status       String    @default("OPEN")
+  
+  store        stores    @relation(fields: [storeId], references: [id])
+}
 
 model transactions {
   id               Int               @id @default(autoincrement())

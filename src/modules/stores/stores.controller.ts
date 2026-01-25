@@ -7,6 +7,7 @@ import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../auth/interface/auth-user.interface';
+import { CloseShiftDto, OpenShiftDto } from './dto/shift.dto';
 
 // Buat interface lokal untuk Request yang terautentikasi
 interface AuthenticatedRequest extends Request {
@@ -15,7 +16,7 @@ interface AuthenticatedRequest extends Request {
 @Controller('stores')
 @UseGuards(JwtGuard, RolesGuard)
 export class StoresController {
-  constructor(private readonly storesService: StoresService) {}
+  constructor(private readonly storesService: StoresService) { }
 
   @Post()
   @Roles('owner')
@@ -52,6 +53,25 @@ export class StoresController {
   async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.storesService.remove(id, req.user.tenantId);
   }
+
+  @Post('shift/open')
+  @Roles('owner')
+  async openShift(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: OpenShiftDto
+  ) {
+    // userId didapat dari token JWT (req.user.sub atau req.user.id)
+    return this.storesService.openShift(req.user.userId, dto);
+  }
+
+  @Post('shift/close')
+    @UseGuards(JwtGuard)
+    async closeShift(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: CloseShiftDto
+    ) {
+        return this.storesService.closeShift(req.user.userId, dto);
+    }
 
   @Post(':id/assign-staff')
   @Roles('owner')

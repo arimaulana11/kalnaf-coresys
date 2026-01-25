@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { v4 as uuidv4 } from 'uuid';
+import { CloseShiftDto, OpenShiftDto } from './dto/shift.dto';
 
 @Injectable()
 export class StoresService {
@@ -89,7 +90,7 @@ export class StoresService {
     }
 
     async getMyAccess(user: { userId: string; tenantId: string; role: string }) {
-        if (user.role === 'owner') {          
+        if (user.role === 'owner') {
             const allStores = await this.prisma.stores.findMany({
                 where: { tenant_id: user.tenantId },
                 orderBy: { created_at: 'desc' },
@@ -134,5 +135,71 @@ export class StoresService {
             createdAt: item.stores.created_at,
             updatedAt: item.stores.updated_at,
         }));
+    }
+
+    async openShift(userId: string, dto: OpenShiftDto) {
+        const activeShift = await this.prisma.store_shifts.findFirst({
+            where: { userId, status: 'OPEN' }
+        });
+
+        if (activeShift) {
+            throw new BadRequestException('Anda masih memiliki shift yang belum ditutup.');
+        }
+
+        const shift = await this.prisma.store_shifts.create({
+            data: {
+                storeId: dto.storeId,
+                userId: userId,
+                startingCash: dto.startingCash,
+                status: 'OPEN'
+            }
+        });
+
+        // Mengembalikan data dengan konversi tipe agar response bersih
+        return {
+            ...shift,
+            startingCash: Number(shift.startingCash),
+            startTime: shift.startTime.toISOString()
+        };
+    }
+
+    // TODO : nanti update ketika modul sales selesai karena total transaksi belum dapat dari situ
+    async closeShift(userId: string, dto: CloseShiftDto) {
+        const shift = await this.prisma.store_shifts.findUnique({
+            where: { id: dto.shiftId }
+        });
+
+        if (!shift || shift.status === 'CLOSED') {
+            throw new BadRequestException('Shift tidak ditemukan atau sudah ditutup.');
+        }
+
+        if (shift.userId !== userId) {
+            throw new ForbiddenException('Anda tidak berwenang menutup shift ini.');
+        }
+
+        // Perhitungan sementara tanpa tabel sales
+        const totalCashSalesAmount = 0;
+        const expectedCash = Number(shift.startingCash) + totalCashSalesAmount;
+        const difference = dto.actualCash - expectedCash;
+
+        const updatedShift = await this.prisma.store_shifts.update({
+            where: { id: dto.shiftId },
+            data: {
+                status: 'CLOSED',
+                endTime: new Date(),
+                closingCash: dto.actualCash,
+            }
+        });
+
+        return {
+            message: 'Shift berhasil ditutup',
+            data: {
+                id: updatedShift.id,
+                expectedCash,
+                actualCash: dto.actualCash,
+                difference,
+                status: updatedShift.status
+            }
+        };
     }
 }
