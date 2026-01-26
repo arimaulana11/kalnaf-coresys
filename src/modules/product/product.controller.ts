@@ -2,10 +2,10 @@
 import { Controller, Post, Get, Body, UseGuards, Request, Query, Param, ParseIntPipe, Req, Patch, Delete, Headers as NestHeaders } from '@nestjs/common';
 import { ProductsService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { JwtGuard } from 'src/common/guards/jwt.guard';
-import { RolesGuard } from 'src/common/guards/roles.guard';
+import { JwtGuard } from '../../common/guards/jwt.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { AuthUser } from '../auth/interface/auth-user.interface';
-import { Roles } from 'src/common/decorators/roles.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { CreateVariantDto } from './dto/varian-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateParcelDto, UpdateVariantDto } from './dto/update-variant.dto';
