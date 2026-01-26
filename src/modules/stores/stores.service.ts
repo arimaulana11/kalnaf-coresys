@@ -106,8 +106,8 @@ export class StoresService {
                 receipt_header: store.receipt_header,
                 receipt_footer: store.receipt_footer,
                 is_active: true, // Owner selalu dianggap aktif untuk semua tokonya
-                createdAt: store.created_at,
-                updatedAt: store.updated_at,
+                createdAt: store.created_at.toISOString(),
+                updatedAt: store.updated_at.toISOString(),
             }));
         }
 
@@ -132,8 +132,8 @@ export class StoresService {
             receipt_header: item.stores.receipt_header,
             receipt_footer: item.stores.receipt_footer,
             is_active: item.status === 'active',
-            createdAt: item.stores.created_at,
-            updatedAt: item.stores.updated_at,
+            createdAt: item.stores.created_at.toISOString(),
+            updatedAt: item.stores.updated_at.toISOString(),
         }));
     }
 
