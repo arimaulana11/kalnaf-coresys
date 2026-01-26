@@ -25,7 +25,10 @@ import { InventoryModule } from './modules/inventory/inventory.module';
     CategoryModule,
     ProductModule,
     InventoryModule,
-    HealthController,
+    // HealthController DIHAPUS dari sini
+  ],
+  controllers: [
+    HealthController, // DIPINDAHKAN ke sini
   ],
 })
 export class AppModule {}
