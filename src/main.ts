@@ -13,20 +13,23 @@ let cachedApp: any;
  */
 export const handler = async (req: any, res: any) => {
   try {
+    console.log("--- REQUEST RECEIVED ---"); // Log untuk memastikan fungsi terpanggil
     if (!cachedApp) {
-      console.log("Initializing NestJS for Vercel...");
+      console.log("Bootstrapping NestJS...");
       const app = await createApp();
-      await app.init(); // Penting: Inisialisasi tanpa listen
+      await app.init();
       cachedApp = app.getHttpAdapter().getInstance();
+      console.log("NestJS Initialized!");
     }
     return cachedApp(req, res);
   } catch (err: any) {
-    console.error("Vercel Execution Error:", err);
-    // Memberikan respon JSON agar lebih mudah di-debug di browser
+    // TAMPILKAN ERROR KE LOG VERCEL
+    console.error("FATAL_BOOTSTRAP_ERROR:", err.stack || err);
+    
     res.status(500).json({
-      statusCode: 500,
-      message: "Initialisation Error",
-      error: err.message,
+      error: "FUNCTION_INVOCATION_FAILED_DETAIL",
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
