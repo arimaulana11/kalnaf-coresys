@@ -9,12 +9,18 @@ let cachedApp: any;
 
 // Handler untuk Vercel (Serverless)
 export default async function handler(req: any, res: any) {
-  if (!cachedApp) {
-    const app = await createApp();
-    await app.init(); // Inisialisasi NestJS tanpa listen
-    cachedApp = app.getHttpAdapter().getInstance();
+  try {
+    if (!cachedApp) {
+      console.log("Inisialisasi NestJS...");
+      const app = await createApp();
+      await app.init();
+      cachedApp = app.getHttpAdapter().getInstance();
+    }
+    return cachedApp(req, res);
+  } catch (err) {
+    console.error("Gagal saat inisialisasi:", err);
+    res.status(500).send(err.message);
   }
-  return cachedApp(req, res);
 }
 
 // Logika untuk Local (Hanya jalan jika dipanggil langsung, bukan oleh Vercel)
