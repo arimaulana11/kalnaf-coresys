@@ -10,6 +10,9 @@ import { CategoryModule } from './modules/category/category.module';
 import { ProductModule } from './modules/product/product.module';
 import databaseConfig from './config/database.config';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { TransactionsModule } from './modules/transactions/transactions.module';
+import { CustomerModule } from './modules/customer/customer.module';
+import { ReportModule } from './modules/report/report.module';
 
 @Module({
   imports: [
@@ -25,7 +28,9 @@ import { InventoryModule } from './modules/inventory/inventory.module';
     CategoryModule,
     ProductModule,
     InventoryModule,
-    // HealthController DIHAPUS dari sini
+    TransactionsModule,
+    CustomerModule,
+    ReportModule,
   ],
   controllers: [
     HealthController, // DIPINDAHKAN ke sini

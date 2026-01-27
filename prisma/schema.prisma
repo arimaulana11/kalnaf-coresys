@@ -1,12 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")   // Pakai Non-Pooler Neon
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // --- ENUMS ---
@@ -23,8 +23,9 @@ enum StockLogType {
   ADJUSTMENT
   RETURN
   WASTE
-  TRANSFER_IN   // Tambahkan ini
-  TRANSFER_OUT  // Tambahkan ini
+  TRANSFER_IN
+  TRANSFER_OUT
+  VOID_RESTORE // Tambahkan ini
 }
 
 enum TransactionSource {
@@ -32,6 +33,13 @@ enum TransactionSource {
   SHOPEE
   TOKOPEDIA
   TIKTOK_SHOP
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  UNPAID
+  VOID // Tambahkan ini
 }
 
 // --- MULTI-TENANCY & STORES ---
@@ -50,7 +58,8 @@ model tenants {
   tenant_addons tenant_addons[]
   transactions  transactions[]
   users         users[]
-  taxes         taxes[] // Master data pajak per tenant
+  taxes         taxes[]
+  customers     customers[] // Relasi baru
 }
 
 model stores {
@@ -70,9 +79,27 @@ model stores {
   transactions    transactions[]
   user_stores     user_stores[]
   tenants         tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-  shifts       store_shifts[]
+  shifts          store_shifts[]
 
   @@unique([tenant_id, name])
+}
+
+// --- MASTER DATA: CUSTOMERS ---
+model customers {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  name       String   @db.VarChar(150)
+  phone      String?  @db.VarChar(20)
+  email      String?  @db.VarChar(150)
+  address    String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  tenants      tenants        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  transactions transactions[]
+
+  @@unique([tenantId, phone])
+  @@map("customers")
 }
 
 // --- PRODUCT, TAX & INVENTORY LOGIC ---
@@ -86,7 +113,6 @@ model products {
   imageUrl    String?     @map("image_url") @db.Text
   isActive    Boolean     @default(true) @map("is_active")
 
-  // Relations
   productVariants product_variants[]
   productTaxes    product_taxes[]
   categories      categories         @relation(fields: [categoryId, tenantId], references: [id, tenantId])
@@ -108,7 +134,6 @@ model taxes {
   rate     Float
   isActive Boolean @default(true) @map("is_active")
 
-  // Relations
   productTaxes product_taxes[]
   tenants      tenants         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -119,7 +144,6 @@ model product_taxes {
   productId Int @map("product_id")
   taxId     Int @map("tax_id")
 
-  // Relations
   products products @relation(fields: [productId], references: [id], onDelete: Cascade)
   taxes    taxes    @relation(fields: [taxId], references: [id], onDelete: Cascade)
 
@@ -128,22 +152,19 @@ model product_taxes {
 }
 
 model product_variants {
-  id                Int      @id @default(autoincrement())
-  productId         Int      @map("product_id")
+  id              Int     @id @default(autoincrement())
+  productId       Int     @map("product_id")
+  name            String  @db.VarChar(100)
+  sku             String? @db.VarChar(100)
+  unitName        String  @map("unit_name") @db.VarChar(20)
+  multiplier      Int     @default(1)
+  isBaseUnit      Boolean @default(false) @map("is_base_unit")
+  price           Int
   
-  name              String   @db.VarChar(100)
-  sku               String?  @db.VarChar(100)
-  unitName          String   @map("unit_name") @db.VarChar(20)
-  multiplier        Int      @default(1)
-  isBaseUnit        Boolean  @default(false) @map("is_base_unit")
-  price             Int
-  
-  // Penyesuaian Baru: Self-Referencing Relation
-  parentVariantId   Int?     @map("parent_variant_id")
-  parent            product_variants?  @relation("VariantToVariant", fields: [parentVariantId], references: [id])
-  children          product_variants[] @relation("VariantToVariant")
+  parentVariantId Int?               @map("parent_variant_id")
+  parent          product_variants?  @relation("VariantToVariant", fields: [parentVariantId], references: [id])
+  children        product_variants[] @relation("VariantToVariant")
 
-  // Relations Tetap
   products          products             @relation(fields: [productId], references: [id], onDelete: Cascade)
   stocks            inventory_stock[]
   priceHistory      price_history[]
@@ -156,7 +177,7 @@ model product_variants {
 
   @@index([sku])
   @@index([productId])
-  @@index([parentVariantId]) // Tambahkan index untuk performa
+  @@index([parentVariantId])
   @@map("product_variants")
 }
 
@@ -173,12 +194,11 @@ model product_components {
 }
 
 model inventory_stock {
-  id        Int    @id @default(autoincrement())
-  storeId   String @map("store_id") @db.Uuid
+  id       Int    @id @default(autoincrement())
+  storeId  String @map("store_id") @db.Uuid
   variantId Int    @map("variant_id")
   stockQty  BigInt @default(0) @map("stock_qty")
 
-  // Relations
   variant       product_variants @relation(fields: [variantId], references: [id], onDelete: Cascade)
   stores        stores           @relation(fields: [storeId], references: [id], onDelete: Cascade)
   stockBatches  stock_batches[]
@@ -217,20 +237,20 @@ model inventory_logs {
 }
 
 // --- TRANSACTIONS ---
+
 model store_shifts {
-  id           String    @id @default(uuid())
-  // TAMBAHKAN @db.Uuid di sini
+  id           String    @id @default(uuid()) @db.Uuid
   storeId      String    @db.Uuid 
-  // Jika userId di tabel users juga UUID, tambahkan @db.Uuid di sini:
   userId       String    @db.Uuid 
   
   startTime    DateTime  @default(now())
   endTime      DateTime?
-  startingCash Decimal   @db.Decimal(18, 2)
-  closingCash  Decimal?  @db.Decimal(18, 2)
+  startingCash Int       @default(0)
+  closingCash  Int?
   status       String    @default("OPEN")
   
   store        stores    @relation(fields: [storeId], references: [id])
+  transactions transactions[]
 }
 
 model transactions {
@@ -238,33 +258,45 @@ model transactions {
   tenant_id        String            @db.Uuid
   store_id         String            @db.Uuid
   created_by       String            @db.Uuid
+  shift_id         String            @db.Uuid
+  customer_id      String?           @db.Uuid 
   customer_name    String?           @db.VarChar(100)
-  customer_id      String?           @db.Uuid // Opsional untuk Loyalty Addon
+  
   total_amount     Int
+  paid_amount      Int               @default(0)
+  balance_due      Int               @default(0)
+  payment_method   String
+  payment_status   PaymentStatus     @default(PAID)
+  total_discount   Int               @default(0)
+  
   transaction_date DateTime          @default(now()) @db.Timestamp(6)
   source           TransactionSource @default(OFFLINE_POS)
-  metadata         Json? // Simpan info addon/loyalty di sini
+  metadata         Json? 
 
   transaction_items transaction_items[]
-  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-  stores            stores              @relation(fields: [store_id], references: [id])
-  users             users               @relation(fields: [created_by], references: [id])
+  tenants           tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  stores            stores            @relation(fields: [store_id], references: [id])
+  users             users             @relation(fields: [created_by], references: [id])
+  shift             store_shifts      @relation(fields: [shift_id], references: [id])
+  customer          customers?        @relation(fields: [customer_id], references: [id]) // Relasi ke tabel Customer
 
   @@index([created_by])
   @@index([tenant_id, store_id])
 }
 
 model transaction_items {
-  id                 Int @id @default(autoincrement())
-  transaction_id     Int
-  product_variant_id Int
-  qty                Int
-  unit_price         Int
-  tax_amount         Int @default(0) // Snapshot nominal pajak per item
-  subtotal           Int
+  id                  Int @id @default(autoincrement())
+  transaction_id      Int
+  product_variant_id  Int
+  qty                 Int
+  unit_price          Int
+  cost_price          Int      // Snapshot HPP
+  tax_amount          Int @default(0)
+  discount_amount     Int @default(0)
+  subtotal            Int
 
   product_variants product_variants @relation(fields: [product_variant_id], references: [id])
-  transactions     transactions     @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  transactions      transactions     @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
 
   @@index([transaction_id])
   @@index([product_variant_id])
@@ -282,7 +314,7 @@ model users {
   is_active     Boolean?  @default(true)
   last_login_at DateTime? @db.Timestamp(6)
   created_at    DateTime? @default(now()) @db.Timestamp(6)
-  updated_at    DateTime?
+  updated_at    DateTime? @updatedAt
 
   refresh_tokens refresh_tokens[]
   transactions   transactions[]
@@ -292,10 +324,8 @@ model users {
   @@index([tenant_id])
 }
 
-// ... Sisanya (user_stores, refresh_tokens, addons, tenant_addons, categories, price_history) tetap sama ...
-
 model user_stores {
-  user_id    String    @db.Uuid // Hapus @id di sini
+  user_id    String    @db.Uuid
   store_id   String    @db.Uuid
   status     String    @default("active") @db.VarChar(20)
   created_at DateTime  @default(now()) @db.Timestamp(6)
@@ -305,16 +335,16 @@ model user_stores {
   stores stores @relation(fields: [store_id], references: [id], onDelete: Cascade)
   users  users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@id([user_id, store_id]) // Ini sudah cukup sebagai identitas unik
+  @@id([user_id, store_id])
 }
 
 model refresh_tokens {
-  id         String    @id @db.Uuid
-  user_id    String    @db.Uuid
-  token_hash String    @unique
-  expires_at DateTime  @db.Timestamp(6)
-  revoked    Boolean?  @default(false)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
+  id          String    @id @db.Uuid
+  user_id     String    @db.Uuid
+  token_hash  String    @unique
+  expires_at  DateTime  @db.Timestamp(6)
+  revoked     Boolean?  @default(false)
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
 
   users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -346,15 +376,15 @@ model tenant_addons {
 }
 
 model categories {
-  id          Int     @id @default(autoincrement())
-  tenantId    String  @map("tenant_id") @db.Uuid // Tambahkan @map dan ubah ke camelCase
-  name        String  @db.VarChar(100)
+  id          Int      @id @default(autoincrement())
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String   @db.VarChar(100)
   description String?
 
-  tenants  tenants    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenants  tenants   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   products products[]
 
-  @@unique([id, tenantId]) // Pastikan ini juga menggunakan camelCase
+  @@unique([id, tenantId])
   @@map("categories")
 }
 

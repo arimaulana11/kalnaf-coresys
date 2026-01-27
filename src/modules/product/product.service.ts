@@ -313,8 +313,6 @@ export class ProductsService {
     });
   }
 
-  // src/modules/products/products.service.ts
-
   async updateParcelComponents(tenantId: string, variantId: number, dto: UpdateParcelDto) {
     // 1. Validasi kepemilikan variant melalui join ke product
     const variant = await this.prisma.product_variants.findFirst({
