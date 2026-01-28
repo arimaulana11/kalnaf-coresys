@@ -92,6 +92,7 @@ model customers {
   phone      String?  @db.VarChar(20)
   email      String?  @db.VarChar(150)
   address    String?
+  metadata   Json?    // <--- Tambahkan baris ini
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 

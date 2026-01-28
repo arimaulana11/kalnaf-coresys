@@ -2,8 +2,9 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../database/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { PaymentStatus, StockLogType } from '@prisma/client';
-import { TransactionMetadata } from './interfaces/transaction.interface';
-import { mapMetadata } from 'src/common/utils/metadata-helper';
+// import { TransactionMetadata } from './interfaces/transaction.interface';
+import { mapMetadata } from '../../common/utils/metadata-helper';
+import { PayDebtDto } from './dto/pay-debt.dto';
 
 // 1. Definisikan Interface untuk menampung data sementara di memori
 interface TempTransactionItem {
@@ -320,6 +321,88 @@ export class TransactionsService {
           }
         }
       });
+    });
+  }
+
+  async getDebts(tenantId: string, page: number = 1, limit: number = 10, customerId?: string) {
+    const take = Number(limit) || 10;
+    const skip = (Number(page) - 1) * take;
+
+    // 1. Buat filter dinamis
+    const whereCondition: any = {
+      tenant_id: tenantId,
+      balance_due: { gt: 0 }, // Sisa bayar lebih dari 0
+      payment_status: { not: 'VOID' as any },
+    };
+
+    // 2. Tambahkan filter customerId jika dikirim dari query params
+    if (customerId) {
+      whereCondition.customer_id = customerId;
+    }
+
+    const [data, total, summary] = await Promise.all([
+      this.prisma.transactions.findMany({
+        where: whereCondition,
+        include: {
+          customer: {
+            select: { name: true, phone: true }
+          }
+        },
+        take: take,
+        skip: skip,
+        orderBy: { transaction_date: 'desc' }
+      }),
+      this.prisma.transactions.count({ where: whereCondition }),
+      // Opsional: Hitung total nominal hutang yang difilter
+      this.prisma.transactions.aggregate({
+        where: whereCondition,
+        _sum: { balance_due: true }
+      })
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        total_debt_amount: summary._sum.balance_due || 0,
+        lastPage: Math.ceil(total / take),
+        currentPage: Number(page),
+        perPage: take
+      }
+    };
+  }
+  
+  async payDebt(transactionId: number, dto: PayDebtDto, tenantId: string) {
+    // 1. Cari transaksi hutangnya
+    const transaction = await this.prisma.transactions.findFirst({
+      where: { id: transactionId, tenant_id: tenantId },
+    });
+
+    if (!transaction) throw new NotFoundException('Transaksi tidak ditemukan');
+    if (transaction.balance_due <= 0) throw new BadRequestException('Transaksi ini sudah lunas');
+    if (dto.amount > transaction.balance_due) {
+      throw new BadRequestException(`Pembayaran melebihi sisa hutang (Sisa: ${transaction.balance_due})`);
+    }
+
+    // 2. Proses update data
+    return this.prisma.$transaction(async (tx) => {
+      const newBalance = transaction.balance_due - dto.amount;
+      const newPaidAmount = transaction.paid_amount + dto.amount;
+
+      // Update tabel transaksi
+      const updatedTx = await tx.transactions.update({
+        where: { id: transactionId },
+        data: {
+          paid_amount: newPaidAmount,
+          balance_due: newBalance,
+          payment_status: newBalance === 0 ? 'PAID' : 'PARTIAL',
+        },
+      });
+
+      // (Opsional) Jika kamu punya tabel log pembayaran, simpan di sini
+      // await tx.debt_payment_logs.create({ data: { ... } });
+
+      return updatedTx;
     });
   }
 }

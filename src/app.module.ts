@@ -11,8 +11,8 @@ import { ProductModule } from './modules/product/product.module';
 import databaseConfig from './config/database.config';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
-import { CustomerModule } from './modules/customer/customer.module';
 import { ReportModule } from './modules/report/report.module';
+import { CustomersModule } from './modules/customer/customer.module';
 
 @Module({
   imports: [
@@ -29,7 +29,7 @@ import { ReportModule } from './modules/report/report.module';
     ProductModule,
     InventoryModule,
     TransactionsModule,
-    CustomerModule,
+    CustomersModule,
     ReportModule,
   ],
   controllers: [

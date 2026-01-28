@@ -19,14 +19,35 @@ export class StoresService {
         });
     }
 
-    async findAll(tenantId: string) {
-        return this.prisma.stores.findMany({
-            where: { tenant_id: tenantId },
-            orderBy: { created_at: 'desc' },
-            include: {
-                _count: { select: { user_stores: true } },
+    async findAll(tenantId: string, page: number = 1, limit: number = 10) {
+        // Menghitung berapa data yang harus dilewati
+        const skip = (page - 1) * limit;
+
+        // Menjalankan query data dan hitung total secara paralel
+        const [data, total] = await Promise.all([
+            this.prisma.stores.findMany({
+                where: { tenant_id: tenantId },
+                orderBy: { created_at: 'desc' },
+                skip: skip,
+                take: limit,
+                include: {
+                    _count: { select: { user_stores: true } },
+                },
+            }),
+            this.prisma.stores.count({
+                where: { tenant_id: tenantId }
+            }),
+        ]);
+
+        return {
+            data,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
             },
-        });
+        };
     }
 
     async findOne(id: string, tenantId: string) {

@@ -1,11 +1,12 @@
-import { Controller, Post, Body, UseGuards, Req, Headers, Get, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, Headers, Get, Param, ParseIntPipe, Query, Patch } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
-import { JwtGuard } from 'src/common/guards/jwt.guard';
-import { RolesGuard } from 'src/common/guards/roles.guard';
+import { JwtGuard } from '../../common/guards/jwt.guard';       // Ubah ke relative
+import { RolesGuard } from '../../common/guards/roles.guard';   // Ubah ke relative
 import { AuthUser } from '../auth/interface/auth-user.interface';
-import { Roles } from 'src/common/decorators/roles.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { VoidTransactionDto } from './dto/void-transaction.dto';
+import { PayDebtDto } from './dto/pay-debt.dto';
 
 interface AuthenticatedRequest extends Request {
     user: AuthUser;
@@ -56,5 +57,26 @@ export class TransactionsController {
         const tenantId = req.user.tenantId;
         const userId = req.user.userId; // ID user yang melakukan pembatalan
         return this.transactionsService.voidTransaction(id, tenantId, userId, dto.reason);
+    }
+
+    @Get('debts')
+    @Roles('owner')
+    async getDebts(
+        @Query('page') page,
+        @Query('limit') limit,
+        @Query('customerId') customerId: string, // Tambahkan ini
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.transactionsService.getDebts(req.user.tenantId, page, limit, customerId);
+    }
+
+    @Patch(':id/pay-debt')
+    @Roles('owner')
+    async payDebt(
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: PayDebtDto,
+        @Req() req: AuthenticatedRequest,
+    ) {
+        return this.transactionsService.payDebt(id, dto, req.user.tenantId);
     }
 }

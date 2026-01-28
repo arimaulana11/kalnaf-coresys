@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Patch, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Delete, Body, Param, UseGuards, Req, Query } from '@nestjs/common';
 import { StoresService } from './stores.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
@@ -26,8 +26,12 @@ export class StoresController {
 
   @Get()
   @Roles('owner')
-  async findAll(@Req() req: any) {
-    return this.storesService.findAll(req.user.tenantId);
+  async findAll(
+    @Req() req: any,
+    @Query('page') page: number,
+    @Query('limit') limit: number,
+  ) {
+    return this.storesService.findAll(req.user.tenantId, page, limit);
   }
 
   @Get('my-access')
@@ -65,13 +69,13 @@ export class StoresController {
   }
 
   @Post('shift/close')
-    @UseGuards(JwtGuard)
-    async closeShift(
-        @Req() req: AuthenticatedRequest,
-        @Body() dto: CloseShiftDto
-    ) {
-        return this.storesService.closeShift(req.user.userId, dto);
-    }
+  @UseGuards(JwtGuard)
+  async closeShift(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CloseShiftDto
+  ) {
+    return this.storesService.closeShift(req.user.userId, dto);
+  }
 
   @Post(':id/assign-staff')
   @Roles('owner')
