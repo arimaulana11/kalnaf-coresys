@@ -223,4 +223,16 @@ export class StoresService {
             }
         };
     }
+
+    async findCurrentShift(storeId: string) {
+        return await this.prisma.store_shifts.findFirst({
+            where: {
+                storeId: storeId,
+                status: 'OPEN',
+            },
+            include: {
+                user: { select: { name: true } },
+            },
+        });
+    }
 }

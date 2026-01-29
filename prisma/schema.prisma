@@ -251,6 +251,7 @@ model store_shifts {
   status       String    @default("OPEN")
   
   store        stores    @relation(fields: [storeId], references: [id])
+  user         users     @relation(fields: [userId], references: [id])
   transactions transactions[]
 }
 
@@ -321,6 +322,7 @@ model users {
   transactions   transactions[]
   user_stores    user_stores[]
   tenants        tenants          @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  store_shifts store_shifts[]
 
   @@index([tenant_id])
 }

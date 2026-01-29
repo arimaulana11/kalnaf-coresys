@@ -8,6 +8,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../auth/interface/auth-user.interface';
 import { CloseShiftDto, OpenShiftDto } from './dto/shift.dto';
+import { GetCurrentShiftDto } from './dto/get-current-shift.dto';
 
 // Buat interface lokal untuk Request yang terautentikasi
 interface AuthenticatedRequest extends Request {
@@ -38,6 +39,12 @@ export class StoresController {
   @Roles('owner', 'manager', 'staff') // Bisa diakses keduanya
   async getMyAccess(@Req() req: AuthenticatedRequest) {
     return this.storesService.getMyAccess(req.user);
+  }
+
+  @Get('shift/current')
+  @Roles('owner', 'manager', 'staff') // Bisa diakses keduanya
+  async getCurrentShift(@Query() query: GetCurrentShiftDto) {
+    return this.storesService.findCurrentShift(query.storeId);
   }
 
   @Get(':id')
