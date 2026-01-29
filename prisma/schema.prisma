@@ -383,6 +383,8 @@ model categories {
   tenantId    String   @map("tenant_id") @db.Uuid
   name        String   @db.VarChar(100)
   description String?
+  created_at DateTime @default(now()) 
+  updated_at DateTime @updatedAt
 
   tenants  tenants   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   products products[]
