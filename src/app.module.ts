@@ -13,6 +13,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ReportModule } from './modules/report/report.module';
 import { CustomersModule } from './modules/customer/customer.module';
+import { ProductVariantsModule } from './modules/product-variants/product-variants.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { CustomersModule } from './modules/customer/customer.module';
     TransactionsModule,
     CustomersModule,
     ReportModule,
+    ProductVariantsModule,
   ],
   controllers: [
     HealthController, // DIPINDAHKAN ke sini

@@ -209,7 +209,26 @@ export class ProductsService {
         take: limit,
         include: {
           categories: true,
-          productVariants: { include: { stocks: true } },
+          productVariants: {
+            include: {
+              stocks: true,
+              asComponent: true,
+              bundleComponents: {
+                include: {
+                  componentVariant: {
+                    include: {
+                      products: true,
+                      stocks: {
+                        include: {
+                          variant: true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
         },
         orderBy: { id: 'desc' },
       }),
@@ -236,39 +255,112 @@ export class ProductsService {
     const product = await this.prisma.products.findFirst({
       where: { id, tenantId },
       include: {
-        productTaxes: { include: { taxes: true } },
         categories: true,
         productVariants: {
           include: {
-            stocks: true,
-            // TAMBAHKAN INI AGAR KOMPONEN PARCEL MUNCUL
+            // Ganti ke asComponent HANYA JIKA Anda salah memasukkan data saat Create.
+            // Secara logika, tetap gunakan bundleComponents untuk isi Paket.
             bundleComponents: {
               include: {
-                componentVariant: true // Mengambil detail produk yang ada di dalam paket
+                componentVariant: { // Mengambil data barang yang ada di dalam paket
+                  include: {
+                    products: true // Nama asli produk (misal: Bimoli)
+                  }
+                }
               }
             }
           }
         }
       }
     });
+
     if (!product) throw new NotFoundException('Product not found');
     return product;
   }
 
   async update(tenantId: string, id: number, dto: UpdateProductDto) {
+    // 1. Pastikan produk ada dan milik tenant yang benar
     const product = await this.findOne(tenantId, id);
+
     return this.prisma.products.update({
-      where: { id: product.id },
+      where: {
+        id_tenantId: {
+          id: product.id,
+          tenantId: tenantId,
+        },
+      },
       data: {
         name: dto.name,
         description: dto.description,
         imageUrl: dto.imageUrl,
-        categoryId: dto.categoryId,
-        isActive: dto.isActive
-      }
+        isActive: dto.isActive,
+
+        // Update Relasi Kategori
+        categories: dto.categoryId
+          ? {
+            connect: {
+              id_tenantId: {
+                id: dto.categoryId,
+                tenantId: tenantId,
+              },
+            },
+          }
+          : undefined,
+
+        // Update Relasi Variants (menggunakan nama sesuai schema: productVariants)
+        productVariants: dto.variants?.length
+          ? {
+            upsert: dto.variants.map((v) => ({
+              // Jika ada ID (update), jika tidak ada/0 (create baru)
+              where: { id: v.id || 0 },
+              update: {
+                name: v.name,
+                price: v.price,
+                sku: v.sku,
+                unitName: v.unitName,
+                multiplier: v.multiplier,
+                isBaseUnit: v.isBaseUnit,
+                // Update Komponen (Bundle)
+                bundleComponents: v.components
+                  ? {
+                    deleteMany: {}, // Hapus komponen lama di variant ini
+                    create: v.components.map((c) => ({
+                      componentVariantId: c.componentVariantId,
+                      qty: c.qty,
+                    })),
+                  }
+                  : undefined,
+              },
+              create: {
+                name: v.name,
+                price: v.price,
+                sku: v.sku,
+                unitName: v.unitName || 'pcs',
+                multiplier: v.multiplier || 1,
+                isBaseUnit: v.isBaseUnit || false,
+                // Create Komponen (Tanpa deleteMany karena data baru)
+                bundleComponents: v.components?.length
+                  ? {
+                    create: v.components.map((c) => ({
+                      componentVariantId: c.componentVariantId,
+                      qty: c.qty,
+                    })),
+                  }
+                  : undefined,
+              },
+            })),
+          }
+          : undefined,
+      },
+      include: {
+        productVariants: {
+          include: {
+            bundleComponents: true, // Sertakan komponen dalam return value
+          },
+        },
+      },
     });
   }
-
   async search(tenantId: string, queryText: string) {
     return this.prisma.products.findMany({
       where: {

@@ -3,6 +3,9 @@ import { IsString, IsOptional, IsNumber, Min, IsBoolean, IsArray, ValidateNested
 import { CreateComponentDto } from './component-product.dto';
 
 export class CreateVariantDto {
+  @IsOptional() // <-- Ini kuncinya
+  id?: number;
+  
   @IsString()
   name: string; // Contoh: "No 40 - Merah"
 

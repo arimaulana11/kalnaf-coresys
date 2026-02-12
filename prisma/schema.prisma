@@ -383,11 +383,19 @@ model categories {
   tenantId    String   @map("tenant_id") @db.Uuid
   name        String   @db.VarChar(100)
   description String?
-  created_at DateTime @default(now()) 
-  updated_at DateTime @updatedAt
+  
+  // 1. Tambahkan kolom ini sebagai penampung ID Parent
+  categoryId  Int?     @map("category_id") 
 
-  tenants  tenants   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  products products[]
+  created_at  DateTime @default(now()) 
+  updated_at  DateTime @updatedAt
+
+  // 2. Perbaiki relasi self-relation (Parent-Child)
+  parent      categories?  @relation("CategoryToCategory", fields: [categoryId, tenantId], references: [id, tenantId])
+  children    categories[] @relation("CategoryToCategory")
+  
+  tenants     tenants      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products    products[]
 
   @@unique([id, tenantId])
   @@map("categories")
