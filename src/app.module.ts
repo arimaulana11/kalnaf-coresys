@@ -14,6 +14,7 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ReportModule } from './modules/report/report.module';
 import { CustomersModule } from './modules/customer/customer.module';
 import { ProductVariantsModule } from './modules/product-variants/product-variants.module';
+import { StaffModule } from './modules/staff/staff.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ProductVariantsModule } from './modules/product-variants/product-varian
     InventoryModule,
     TransactionsModule,
     CustomersModule,
+    StaffModule,
     ReportModule,
     ProductVariantsModule,
   ],
