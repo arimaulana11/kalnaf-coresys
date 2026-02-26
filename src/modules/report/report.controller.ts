@@ -1,10 +1,12 @@
-import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Req, UsePipes, ValidationPipe } from '@nestjs/common';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../auth/interface/auth-user.interface';
 import { QueryReportDto } from './dto/query-report.dto';
 import { ReportsService } from './report.service';
+import { SalesReportQueryDto } from './dto/sales-report-query.dto';
+import { ShiftReportQueryDto } from './dto/shift-report-query.dto';
 
 interface AuthenticatedRequest extends Request {
   user: AuthUser;
@@ -61,5 +63,22 @@ export class ReportsController {
   ) {
     // Sekarang ini sudah valid karena Service mengharapkan QueryReportDto
     return this.reportsService.getStaffPerformance(query, req.user.tenantId);
+  }
+
+  @Get('sales')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async getSales(
+    @Query() query: SalesReportQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.reportsService.getSalesReport(query);
+  }
+
+  @Get('shifts')
+  async getShiftReports(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ShiftReportQueryDto
+  ) {
+    return await this.reportsService.getShiftReports(query);
   }
 }
