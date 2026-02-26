@@ -20,13 +20,29 @@ interface TempTransactionItem {
   variantName: string;
 }
 
+interface StockUpdateQueue {
+  stockId: number;
+  qtyReduce: bigint;
+  variantName: string;
+}
+
+interface TransactionItemInsert {
+  product_variant_id: number;
+  qty: number;
+  unit_price: number;
+  cost_price: number;
+  discount_amount: number;
+  tax_amount: number;
+  subtotal: number;
+}
+
 @Injectable()
 export class TransactionsService {
   constructor(private prisma: PrismaService) { }
 
   async createTransaction(tenantId: string, userId: string, dto: CreateTransactionDto) {
     return await this.prisma.$transaction(async (tx) => {
-      // 1. Cek Shift Aktif
+      // --- 1. CEK SHIFT AKTIF ---
       const activeShift = await tx.store_shifts.findFirst({
         where: { storeId: dto.storeId, userId: userId, status: 'OPEN' },
       });
@@ -35,38 +51,28 @@ export class TransactionsService {
         throw new BadRequestException('Tidak ada shift aktif. Silahkan buka shift terlebih dahulu.');
       }
 
-      // 2. Handle Quick Add Customer
-      let finalCustomerId = dto.customerId;
-      if (!finalCustomerId && (dto.customerName || dto.customerPhone)) {
-        const existing = dto.customerPhone
-          ? await tx.customers.findFirst({ where: { tenantId, phone: dto.customerPhone } })
-          : null;
-
-        if (existing) {
-          finalCustomerId = existing.id;
-        } else {
-          const newCustomer = await tx.customers.create({
-            data: {
-              tenantId: tenantId,
-              name: dto.customerName || 'Walk-in Customer',
-              phone: dto.customerPhone,
-            },
-          });
-          finalCustomerId = newCustomer.id;
-        }
-      }
-
-      // 3. Persiapan Hitung Ulang Server
+      // --- 2. PERSIAPAN DATA ---
       let serverCalculatedTotal = 0;
-      // Berikan tipe data agar tidak error TS2345 (never)
-      const transactionItemsToCreate: TempTransactionItem[] = [];
+      const transactionItemsToCreate: TransactionItemInsert[] = [];
+      const stockUpdates: StockUpdateQueue[] = [];
 
-      // 4. Loop Items untuk Validasi Harga & Stok
+      // --- 3. LOOP ITEMS DARI REQUEST ---
       for (const item of dto.items) {
         const variant = await tx.product_variants.findUnique({
           where: { id: item.variantId },
           include: {
-            products: { include: { productTaxes: { include: { taxes: true } } } },
+            products: true,
+            bundleComponents: {
+              include: {
+                componentVariant: {
+                  include: {
+                    // Komponen parcel pun bisa jadi punya parent (misal isi parcel adalah satuan eceran dari grosir)
+                    parent: { include: { stocks: { where: { storeId: dto.storeId } } } },
+                    stocks: { where: { storeId: dto.storeId } }
+                  }
+                }
+              }
+            },
             parent: { include: { stocks: { where: { storeId: dto.storeId } } } },
             stocks: { where: { storeId: dto.storeId } }
           }
@@ -74,36 +80,73 @@ export class TransactionsService {
 
         if (!variant) throw new NotFoundException(`Produk ID ${item.variantId} tidak ditemukan`);
 
-        // --- PROTEKSI HARGA ---
+        // A. Perhitungan Harga & Pajak
         const actualPrice = variant.price;
         const itemDiscount = item.discount || 0;
         const subtotalDPP = (actualPrice * item.qty) - itemDiscount;
-
-        // Hitung Pajak
         let itemTaxTotal = 0;
-        variant.products?.productTaxes?.forEach(pt => {
-          itemTaxTotal += (subtotalDPP * (pt.taxes.rate / 100));
-        });
-
         const finalItemSubtotal = subtotalDPP + Math.round(itemTaxTotal);
         serverCalculatedTotal += finalItemSubtotal;
 
-        // Cek Sumber Stok
-        const stockSource = variant.parent ? variant.parent.stocks[0] : variant.stocks[0];
-        if (!stockSource) throw new BadRequestException(`Stok ${variant.name} belum diatur di toko ini.`);
+        // B. LOGIKA PENGURANGAN STOK
+        if (variant.products.type === 'PARCEL') {
+          // --- KASUS PARCEL ---
+          if (variant.bundleComponents.length === 0) {
+            throw new BadRequestException(`Parcel ${variant.name} belum memiliki komponen penyusun.`);
+          }
 
-        const qtyReduce = BigInt(item.qty * (variant.multiplier || 1));
-        if (stockSource.stockQty < qtyReduce) {
-          throw new BadRequestException(`Stok ${variant.name} tidak cukup (Tersisa: ${stockSource.stockQty.toString()})`);
+          for (const bundle of variant.bundleComponents) {
+            // Logika Parent-First untuk komponen di dalam Parcel
+            const compStockSource = bundle.componentVariant.parent
+              ? bundle.componentVariant.parent.stocks[0]
+              : bundle.componentVariant.stocks[0];
+
+            if (!compStockSource) throw new BadRequestException(`Stok komponen ${bundle.componentVariant.name} belum diatur.`);
+
+            // Multiplier komponen (jika komponen itu sendiri adalah produk konversi)
+            const compMultiplier = bundle.componentVariant.multiplier || 1;
+            const totalQtyToReduce = BigInt(item.qty * bundle.qty * compMultiplier);
+
+            if (compStockSource.stockQty < totalQtyToReduce) {
+              throw new BadRequestException(`Stok komponen ${bundle.componentVariant.name} tidak cukup.`);
+            }
+
+            stockUpdates.push({
+              stockId: compStockSource.id,
+              qtyReduce: totalQtyToReduce,
+              variantName: `${variant.name} (isi: ${bundle.componentVariant.name})`
+            });
+          }
+        } else {
+          // --- KASUS REGULER / GROSIR (PARENT-BASED) ---
+          // Selalu prioritaskan ambil stok dari Parent jika variant ini adalah produk konversi
+          const stockSource = variant.parent ? variant.parent.stocks[0] : variant.stocks[0];
+
+          if (!stockSource) throw new BadRequestException(`Stok ${variant.name} tidak tersedia di toko ini.`);
+
+          // Hitung pengurangan berdasarkan multiplier (Contoh: Jual 1 Pack isi 10, multiplier 10, stok berkurang 10)
+          const qtyReduce = BigInt(item.qty * (variant.multiplier || 1));
+
+          if (stockSource.stockQty < qtyReduce) {
+            throw new BadRequestException(`Stok ${variant.name} tidak cukup.`);
+          }
+
+          stockUpdates.push({
+            stockId: stockSource.id,
+            qtyReduce: qtyReduce,
+            variantName: variant.name
+          });
         }
 
-        // Ambil HPP Snapshot
-        const latestBatch = await tx.stock_batches.findFirst({
-          where: { inventoryStockId: stockSource.id },
-          orderBy: { createdAt: 'desc' }
-        });
+        // C. Ambil HPP Snapshot (Selalu merujuk ke Stock Source ID yang benar)
+        // Jika produk reguler, pakai stockSource. Jika parcel, HPP biasanya 0 di level header (atau total komponen)
+        const snapshotStockId = variant.parent ? variant.parent.stocks[0]?.id : variant.stocks[0]?.id;
 
-        // Simpan ke array memori
+        const latestBatch = snapshotStockId ? await tx.stock_batches.findFirst({
+          where: { inventoryStockId: snapshotStockId },
+          orderBy: { createdAt: 'desc' }
+        }) : null;
+
         transactionItemsToCreate.push({
           product_variant_id: item.variantId,
           qty: item.qty,
@@ -112,20 +155,14 @@ export class TransactionsService {
           discount_amount: itemDiscount,
           tax_amount: Math.round(itemTaxTotal),
           subtotal: finalItemSubtotal,
-          stockSourceId: stockSource.id,
-          qtyReduce: qtyReduce,
-          variantName: variant.name
         });
       }
 
-      // 5. VALIDASI TOTAL AMOUNT (Anti-Fraud)
-      if (Math.abs(serverCalculatedTotal - dto.totalAmount) > 1) { // Toleransi pembulatan 1 rupiah
-        throw new BadRequestException(
-          `Total tidak valid. Server: ${serverCalculatedTotal}, Request: ${dto.totalAmount}`
-        );
+      // --- 4. VALIDASI TOTAL & CREATE HEADER ---
+      if (Math.abs(serverCalculatedTotal - dto.totalAmount) > 2) {
+        throw new BadRequestException(`Total tidak valid. Server: ${serverCalculatedTotal}, Request: ${dto.totalAmount}`);
       }
 
-      // 6. Buat Header Transaksi
       const balanceDue = serverCalculatedTotal - dto.paidAmount;
       const transaction = await tx.transactions.create({
         data: {
@@ -133,47 +170,41 @@ export class TransactionsService {
           store_id: dto.storeId,
           created_by: userId,
           shift_id: activeShift.id,
-          customer_id: finalCustomerId,
           customer_name: dto.customerName,
           total_amount: serverCalculatedTotal,
           paid_amount: dto.paidAmount,
           balance_due: balanceDue > 0 ? balanceDue : 0,
-          payment_status: balanceDue > 0 ? (dto.paidAmount > 0 ? PaymentStatus.PARTIAL : PaymentStatus.UNPAID) : PaymentStatus.PAID,
           payment_method: dto.paymentMethod,
+          payment_status: balanceDue > 0 ? (dto.paidAmount > 0 ? PaymentStatus.PARTIAL : PaymentStatus.UNPAID) : PaymentStatus.PAID,
           metadata: dto.metadata || {},
         },
       });
 
-      // 7. Simpan Detail, Update Stok & Logs (Iterasi dari Memory Array)
-      for (const tItem of transactionItemsToCreate) {
-        await tx.transaction_items.create({
-          data: {
-            transaction_id: transaction.id,
-            product_variant_id: tItem.product_variant_id,
-            qty: tItem.qty,
-            unit_price: tItem.unit_price,
-            cost_price: tItem.cost_price,
-            discount_amount: tItem.discount_amount,
-            tax_amount: tItem.tax_amount,
-            subtotal: tItem.subtotal,
-          },
-        });
-
+      // --- 5. EKSEKUSI UPDATE STOK & LOGS ---
+      for (const update of stockUpdates) {
         await tx.inventory_stock.update({
-          where: { id: tItem.stockSourceId },
-          data: { stockQty: { decrement: tItem.qtyReduce } }
+          where: { id: update.stockId },
+          data: { stockQty: { decrement: update.qtyReduce } }
         });
 
         await tx.inventory_logs.create({
           data: {
-            inventoryStockId: tItem.stockSourceId,
+            inventoryStockId: update.stockId,
             type: StockLogType.SALE,
-            qtyChange: -Number(tItem.qtyReduce),
+            qtyChange: -Number(update.qtyReduce),
             referenceId: transaction.id.toString(),
-            notes: `Sale #${transaction.id}: ${tItem.variantName} x${tItem.qty}`
+            notes: `Sale #${transaction.id}: ${update.variantName}`
           }
         });
       }
+
+      // --- 6. SIMPAN DETAIL TRANSAKSI ---
+      await tx.transaction_items.createMany({
+        data: transactionItemsToCreate.map(item => ({
+          ...item,
+          transaction_id: transaction.id
+        }))
+      });
 
       return transaction;
     });
@@ -371,7 +402,7 @@ export class TransactionsService {
       }
     };
   }
-  
+
   async payDebt(transactionId: number, dto: PayDebtDto, tenantId: string) {
     // 1. Cari transaksi hutangnya
     const transaction = await this.prisma.transactions.findFirst({

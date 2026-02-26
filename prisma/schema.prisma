@@ -26,6 +26,7 @@ enum StockLogType {
   TRANSFER_IN
   TRANSFER_OUT
   VOID_RESTORE // Tambahkan ini
+  BUNDLE_UNPACK
 }
 
 enum TransactionSource {
@@ -153,25 +154,31 @@ model product_taxes {
 }
 
 model product_variants {
-  id              Int     @id @default(autoincrement())
-  productId       Int     @map("product_id")
-  name            String  @db.VarChar(100)
-  sku             String? @db.VarChar(100)
-  unitName        String  @map("unit_name") @db.VarChar(20)
-  multiplier      Int     @default(1)
-  isBaseUnit      Boolean @default(false) @map("is_base_unit")
+  id              Int      @id @default(autoincrement())
+  productId       Int      @map("product_id")
+  name            String   @db.VarChar(100)
+  sku             String?  @db.VarChar(100)
+  unitName        String   @map("unit_name") @db.VarChar(20)
+  multiplier      Int      @default(1)
+  isBaseUnit      Boolean  @default(false) @map("is_base_unit")
   price           Int
   
+  // Relasi Konversi Satuan (Grosir/Eceran) yang sudah ada
   parentVariantId Int?               @map("parent_variant_id")
   parent          product_variants?  @relation("VariantToVariant", fields: [parentVariantId], references: [id])
   children        product_variants[] @relation("VariantToVariant")
+
+  // --- PERBAIKAN RELASI PARCEL ---
+  // Variant ini bisa punya banyak komponen (Jika dia adalah sebuah PARCEL)
+  bundleComponents  product_components[] @relation("ParentVariant")
+  
+  // Variant ini bisa menjadi bagian dari banyak parcel lain (Jika dia adalah ISI PARCEL)
+  asComponent       product_components[] @relation("ComponentVariant")
 
   products          products             @relation(fields: [productId], references: [id], onDelete: Cascade)
   stocks            inventory_stock[]
   priceHistory      price_history[]
   transactionItems  transaction_items[]
-  asComponent       product_components[] @relation("ComponentVariant")
-  bundleComponents  product_components[] @relation("ParentVariant")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -184,13 +191,15 @@ model product_variants {
 
 model product_components {
   id                 Int @id @default(autoincrement())
-  parentVariantId    Int @map("parent_variant_id")
-  componentVariantId Int @map("component_variant_id")
-  qty                Int
+  parentVariantId    Int @map("parent_variant_id")    // ID si Parcel-nya
+  componentVariantId Int @map("component_variant_id") // ID barang di dalamnya
+  qty                Int // Jumlah barang tersebut di dalam 1 parcel
 
+  // Relasi diperjelas
   parentVariant    product_variants @relation("ParentVariant", fields: [parentVariantId], references: [id], onDelete: Cascade)
-  componentVariant product_variants @relation("ComponentVariant", fields: [componentVariantId], references: [id])
+  componentVariant product_variants @relation("ComponentVariant", fields: [componentVariantId], references: [id], onDelete: Cascade)
 
+  @@unique([parentVariantId, componentVariantId]) // Menghindari duplikasi komponen yang sama dalam satu parcel
   @@map("product_components")
 }
 
