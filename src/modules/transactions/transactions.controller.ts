@@ -79,4 +79,35 @@ export class TransactionsController {
     ) {
         return this.transactionsService.payDebt(id, dto, req.user.tenantId);
     }
+
+    @Get('history')
+    @Roles('owner')
+    async getHistory(
+        @Req() req: AuthenticatedRequest,
+        @Query('storeId') storeId?: string,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('search') search?: string,
+        @Query('status') status?: string,
+    ) {
+        return this.transactionsService.getAllHistory(req.user.tenantId, {
+            storeId,
+            page,
+            limit,
+            search,
+            status
+        });
+    }
+
+    @Get(':id')
+    @Roles('owner')
+    async getTransactionDetail(
+        @Param('id', ParseIntPipe) id: number,
+        @Req() req: AuthenticatedRequest
+    ) {
+        // Pastikan tenantId diambil dari token user untuk keamanan data
+        const tenantId = req.user.tenantId;
+
+        return this.transactionsService.getTransactionDetail(id, tenantId);
+    }
 }

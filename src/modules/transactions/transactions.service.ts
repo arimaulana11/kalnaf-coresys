@@ -436,4 +436,129 @@ export class TransactionsService {
       return updatedTx;
     });
   }
+
+  async getAllHistory(
+    tenantId: string,
+    query: {
+      storeId?: string;
+      page?: number;
+      limit?: number;
+      search?: string;
+      status?: string
+    }
+  ) {
+    const { storeId, page = 1, limit = 10, search, status } = query;
+    const skip = (page - 1) * limit;
+
+    // 1. Build Filter
+    const whereCondition: any = {
+      tenant_id: tenantId,
+      ...(storeId && { store_id: storeId }),
+      ...(status && { payment_status: status as any }),
+      ...(search && {
+        OR: [
+          { customer_name: { contains: search, mode: 'insensitive' } },
+          // Jika ID adalah integer, pencarian ID biasanya memerlukan query terpisah atau casting
+          // Untuk sementara kita cari berdasarkan nama customer
+        ],
+      }),
+    };
+
+    // 2. Execute Query
+    const [data, total] = await Promise.all([
+      this.prisma.transactions.findMany({
+        where: whereCondition,
+        orderBy: { transaction_date: 'desc' },
+        take: Number(limit),
+        skip: Number(skip),
+        include: {
+          _count: {
+            select: { transaction_items: true }
+          },
+          // Sertakan info user pembuat jika perlu ditampilkan di UI
+          users: {
+            select: { name: true }
+          }
+        }
+      }),
+      this.prisma.transactions.count({ where: whereCondition })
+    ]);
+
+    // 3. Format response agar pas dengan UI Frontend
+    return {
+      data: data.map(tx => ({
+        id: `TRX-${tx.id.toString().padStart(6, '0')}`,
+        db_id: tx.id, // ID asli untuk kebutuhan API Detail
+        customer: tx.customer_name || 'Pelanggan Umum',
+        total: tx.total_amount,
+        status: tx.payment_status,
+        time: tx.transaction_date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        date: tx.transaction_date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+        items: tx._count.transaction_items,
+        cashier: tx.users?.name
+      })),
+      meta: {
+        total,
+        page: Number(page),
+        lastPage: Math.ceil(total / limit)
+      }
+    };
+  }
+
+  async getTransactionDetail(id: number, tenantId: string) {
+    const transaction = await this.prisma.transactions.findFirst({
+      where: {
+        id: id,
+        tenant_id: tenantId,
+      },
+      include: {
+        users: {
+          select: { name: true }
+        },
+        transaction_items: {
+          include: {
+            product_variants: true
+          }
+        }
+      },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(`Transaksi #${id} tidak ditemukan`);
+    }
+
+    // --- LOGIKA PERHITUNGAN TAX ---
+    // Karena di schema kamu tax disimpan per item, kita kalkulasi totalnya
+    const subtotal = transaction.transaction_items.reduce((acc, item) => acc + (item.unit_price * item.qty), 0);
+    const totalTax = transaction.transaction_items.reduce((acc, item) => acc + item.tax_amount, 0);
+    const totalDiscount = transaction.transaction_items.reduce((acc, item) => acc + item.discount_amount, 0);
+
+    // Asumsi percentage pajak (misal 11%) - bisa diambil dari metadata atau setting tenant
+    const taxPercentage = subtotal > 0 ? Math.round((totalTax / subtotal) * 100) : 0;
+
+    return {
+      db_id: transaction.id, // ID asli untuk keperluan operasional (Void, dll)
+      id: `TRX-${transaction.transaction_date.getFullYear()}-${transaction.id.toString().padStart(3, '0')}`,
+      status: transaction.payment_status,
+      date: transaction.transaction_date.toISOString().split('T')[0], // Format: YYYY-MM-DD
+      time: transaction.transaction_date.toLocaleTimeString('id-ID', { hour12: false }),
+      cashier_name: transaction.users?.name || 'Unknown',
+      customer_name: transaction.customer_name || 'Pelanggan Umum',
+      payment_method: transaction.payment_method,
+      items: transaction.transaction_items.map(item => ({
+        product_id: item.product_variant_id,
+        name: item.product_variants.name,
+        quantity: item.qty,
+        price: item.unit_price,
+        total: item.subtotal
+      })),
+      pricing: {
+        subtotal: subtotal,
+        tax_percentage: taxPercentage,
+        tax_amount: totalTax,
+        discount_amount: totalDiscount,
+        grand_total: transaction.total_amount
+      }
+    };
+  }
 }
