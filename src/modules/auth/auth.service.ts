@@ -28,10 +28,10 @@ export class AuthService {
             const user = await tx.users.create({
                 data: {
                     id: uuidv4(),
-                    tenant_id: tenant.id,
+                    tenantId: tenant.id,
                     name: dto.name,
                     email: dto.email,
-                    password_hash: hashedPassword,
+                    passwordHash: hashedPassword,
                     role: 'owner',
                 },
             });
@@ -39,15 +39,15 @@ export class AuthService {
             await tx.stores.create({
                 data: {
                     id: uuidv4(),
-                    tenant_id: tenant.id,
+                    tenantId: tenant.id,
                     name: dto.store_name,
-                    updated_at: new Date(),
+                    updatedAt: new Date(),
                 },
             });
 
             return {
                 message: "Registrasi berhasil", // Ini akan ditangkap interceptor
-                tenantId: user.tenant_id,
+                tenantId: user.tenantId,
                 userId: user.id,
             };
         });
@@ -55,11 +55,11 @@ export class AuthService {
 
     async login(dto: LoginDto) {
         const user = await this.prisma.users.findUnique({ where: { email: dto.email } });
-        if (!user || !(await bcrypt.compare(dto.password, user.password_hash))) {
+        if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
             throw new UnauthorizedException('Email atau password salah');
         }
 
-        const payload = { sub: user.id, tenantId: user.tenant_id, role: user.role };
+        const payload = { sub: user.id, tenantId: user.tenantId, role: user.role };
 
         const accessToken = this.jwtService.sign(payload);
         const refreshToken = uuidv4(); // Sesuai skema refresh_tokens Anda
@@ -68,9 +68,9 @@ export class AuthService {
         await this.prisma.refresh_tokens.create({
             data: {
                 id: uuidv4(),
-                user_id: user.id,
-                token_hash: await bcrypt.hash(refreshToken, 10),
-                expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 hari
+                userId: user.id,
+                tokenHash: await bcrypt.hash(refreshToken, 10),
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 hari
             },
         });
 
@@ -82,14 +82,14 @@ export class AuthService {
     async refresh(refreshToken: string) {
         // ... logika mencari tokenData ...
         const tokenData = await this.prisma.refresh_tokens.findFirst({
-            where: { expires_at: { gt: new Date() } }
+            where: { expiresAt: { gt: new Date() } }
             // Tambahkan logika identifikasi token yang spesifik jika memungkinkan
         });
 
         if (!tokenData) throw new UnauthorizedException('Invalid token');
 
         const user = await this.prisma.users.findUnique({
-            where: { id: tokenData.user_id }
+            where: { id: tokenData.userId }
         });
 
         // PROTEKSI: Cek apakah user ada
@@ -100,7 +100,7 @@ export class AuthService {
         // Sekarang aman, TypeScript tahu 'user' tidak null
         const payload = {
             sub: user.id,
-            tenantId: user.tenant_id,
+            tenantId: user.tenantId,
             role: user.role
         };
 

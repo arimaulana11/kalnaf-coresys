@@ -15,6 +15,7 @@ import { ReportModule } from './modules/report/report.module';
 import { CustomersModule } from './modules/customer/customer.module';
 import { ProductVariantsModule } from './modules/product-variants/product-variants.module';
 import { StaffModule } from './modules/staff/staff.module';
+import { SuppliersModule } from './modules/suppliers/suppliers.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { StaffModule } from './modules/staff/staff.module';
     StaffModule,
     ReportModule,
     ProductVariantsModule,
+    SuppliersModule,
   ],
   controllers: [
     HealthController, // DIPINDAHKAN ke sini

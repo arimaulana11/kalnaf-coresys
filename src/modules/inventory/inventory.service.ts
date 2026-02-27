@@ -16,7 +16,7 @@ export class InventoryService {
         return this.prisma.inventory_stock.findMany({
             where: {
                 storeId: storeId,
-                variant: { products: { tenantId } }
+                variant: { product: { tenantId } }
             },
             include: {
                 variant: {
@@ -31,7 +31,7 @@ export class InventoryService {
         const variant = await this.prisma.product_variants.findFirst({
             where: {
                 id: dto.variantId,
-                products: { tenantId } // Pastikan varian ini milik tenant yang login
+                product: { tenantId } // Pastikan varian ini milik tenant yang login
             }
         });
 
@@ -43,7 +43,7 @@ export class InventoryService {
             // 2. LANJUTKAN UPSERT JIKA VALID
             const stock = await tx.inventory_stock.upsert({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: storeId
                     }
@@ -78,7 +78,7 @@ export class InventoryService {
             // Ambil data stok sekarang
             const currentStock = await tx.inventory_stock.findUnique({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: storeId
                     }
@@ -123,7 +123,7 @@ export class InventoryService {
             this.prisma.product_variants.findFirst({
                 where: {
                     id: dto.variantId,
-                    products: { tenantId } // Security: Pastikan barang milik tenant ini
+                    product: { tenantId } // Security: Pastikan barang milik tenant ini
                 }
             })
         ]);
@@ -138,7 +138,7 @@ export class InventoryService {
             // A. Cek ketersediaan stok di toko asal
             const sourceStock = await tx.inventory_stock.findUnique({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: dto.fromStoreId
                     }
@@ -165,7 +165,7 @@ export class InventoryService {
             // C. Tambah atau buat stok di toko tujuan (Upsert)
             const targetStock = await tx.inventory_stock.upsert({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: dto.toStoreId
                     }
@@ -212,7 +212,7 @@ export class InventoryService {
 
         // 1. Validasi varian dan kepemilikan
         const variant = await this.prisma.product_variants.findFirst({
-            where: { id: dto.variantId, products: { tenantId } }
+            where: { id: dto.variantId, product: { tenantId } }
         });
         if (!variant) throw new BadRequestException('Varian tidak ditemukan');
 
@@ -220,7 +220,7 @@ export class InventoryService {
             // 2. Ambil stok saat ini
             const currentStock = await tx.inventory_stock.findUnique({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: storeId
                     }
@@ -233,7 +233,7 @@ export class InventoryService {
             // 3. Update stok menjadi angka aktual
             const stock = await tx.inventory_stock.upsert({
                 where: {
-                    variant_id_store_id: {
+                    variantId_storeId: {
                         variantId: dto.variantId,
                         storeId: storeId
                     }
@@ -274,7 +274,7 @@ export class InventoryService {
 
         // 1. Validasi kepemilikan
         const variant = await this.prisma.product_variants.findFirst({
-            where: { id: variantId, products: { tenantId } }
+            where: { id: variantId, product: { tenantId } }
         });
         if (!variant) throw new NotFoundException('Varian tidak ditemukan');
 
@@ -290,7 +290,7 @@ export class InventoryService {
                 include: {
                     inventoryStock: {
                         select: {
-                            stores: { select: { name: true } }
+                            store: { select: { name: true } }
                         }
                     }
                 },
@@ -331,7 +331,7 @@ export class InventoryService {
             inventoryStock: {
                 variantId: variantId, // Jika undefined, Prisma otomatis mengabaikan filter ini
                 variant: {
-                    products: { tenantId }
+                    product: { tenantId }
                 }
             }
         };
@@ -346,7 +346,7 @@ export class InventoryService {
                             variant: {
                                 select: { name: true, sku: true } // Ambil data penting saja
                             },
-                            stores: {
+                            store: {
                                 select: { name: true }
                             }
                         }
@@ -385,7 +385,7 @@ export class InventoryService {
                 lt: BigInt(threshold) // Less than threshold
             },
             variant: {
-                products: {
+                product: {
                     tenantId: tenantId
                 }
             }
@@ -401,7 +401,7 @@ export class InventoryService {
                             name: true,
                             sku: true,
                             price: true,
-                            products: { select: { name: true } }
+                            product: { select: { name: true } }
                         }
                     }
                 },

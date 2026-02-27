@@ -38,7 +38,7 @@ export class ProductsService {
     const existingSku = await this.prisma.product_variants.findFirst({
       where: {
         sku: { in: cleanSkus },
-        products: { tenantId: tenantId },
+        product: { tenantId: tenantId },
       },
     });
 
@@ -64,7 +64,7 @@ export class ProductsService {
     const stores = await this.prisma.stores.findMany({
       where: {
         id: { in: uniqueStoreIds },
-        tenant_id: tenantId, // Menggunakan snake_case sesuai skema DB stores
+        tenantId: tenantId, // Menggunakan snake_case sesuai skema DB stores
       },
     });
 
@@ -208,8 +208,8 @@ export class ProductsService {
         skip,
         take: limit,
         include: {
-          categories: true,
-          productVariants: {
+          category: true,
+          variants: {
             include: {
               stocks: true,
               asComponent: true,
@@ -217,7 +217,7 @@ export class ProductsService {
                 include: {
                   componentVariant: {
                     include: {
-                      products: true,
+                      product: true,
                       stocks: {
                         include: {
                           variant: true
@@ -235,10 +235,10 @@ export class ProductsService {
     ]);
 
     const mappedData = products.map((product) => {
-      const baseVariant = product.productVariants.find(v => v.isBaseUnit) || product.productVariants[0];
+      const baseVariant = product.variants.find(v => v.isBaseUnit) || product.variants[0];
       const totalBaseStock = baseVariant?.stocks.reduce((acc, curr) => acc + Number(curr.stockQty), 0) || 0;
 
-      const variantsWithStock = product.productVariants.map((v) => ({
+      const variantsWithStock = product.variants.map((v) => ({
         ...v,
         available_stock: v.isBaseUnit
           ? v.stocks.reduce((acc, curr) => acc + Number(curr.stockQty), 0)
@@ -255,8 +255,8 @@ export class ProductsService {
     const product = await this.prisma.products.findFirst({
       where: { id, tenantId },
       include: {
-        categories: true,
-        productVariants: {
+        category: true,
+        variants: {
           include: {
             // Ganti ke asComponent HANYA JIKA Anda salah memasukkan data saat Create.
             // Secara logika, tetap gunakan bundleComponents untuk isi Paket.
@@ -264,7 +264,7 @@ export class ProductsService {
               include: {
                 componentVariant: { // Mengambil data barang yang ada di dalam paket
                   include: {
-                    products: true // Nama asli produk (misal: Bimoli)
+                    product: true // Nama asli produk (misal: Bimoli)
                   }
                 }
               }
@@ -296,7 +296,7 @@ export class ProductsService {
         isActive: dto.isActive,
 
         // Update Relasi Kategori
-        categories: dto.categoryId
+        category: dto.categoryId
           ? {
             connect: {
               id_tenantId: {
@@ -308,7 +308,7 @@ export class ProductsService {
           : undefined,
 
         // Update Relasi Variants (menggunakan nama sesuai schema: productVariants)
-        productVariants: dto.variants?.length
+        variants: dto.variants?.length
           ? {
             upsert: dto.variants.map((v) => ({
               // Jika ada ID (update), jika tidak ada/0 (create baru)
@@ -353,7 +353,7 @@ export class ProductsService {
           : undefined,
       },
       include: {
-        productVariants: {
+        variants: {
           include: {
             bundleComponents: true, // Sertakan komponen dalam return value
           },
@@ -367,10 +367,10 @@ export class ProductsService {
         tenantId,
         OR: [
           { name: { contains: queryText, mode: 'insensitive' } },
-          { productVariants: { some: { sku: { contains: queryText, mode: 'insensitive' } } } }
+          { variants: { some: { sku: { contains: queryText, mode: 'insensitive' } } } }
         ]
       },
-      include: { productVariants: true, categories: true },
+      include: { variants: true, category: true },
       take: 10
     });
   }
@@ -394,7 +394,7 @@ export class ProductsService {
 
   async updateVariant(tenantId: string, variantId: number, dto: UpdateVariantDto) {
     const variant = await this.prisma.product_variants.findFirst({
-      where: { id: variantId, products: { tenantId } }
+      where: { id: variantId, product: { tenantId } }
     });
     if (!variant) throw new NotFoundException('Variant not found');
     if (dto.sku && dto.sku !== variant.sku) await this.validateSkuUniqueness(tenantId, [dto.sku]);
@@ -410,13 +410,13 @@ export class ProductsService {
     const variant = await this.prisma.product_variants.findFirst({
       where: {
         id: variantId,
-        products: { tenantId: tenantId }
+        product: { tenantId: tenantId }
       },
-      include: { products: true }
+      include: { product: true }
     });
 
     if (!variant) throw new NotFoundException('Varian produk tidak ditemukan');
-    if (variant.products.type !== 'PARCEL') {
+    if (variant.product.type !== 'PARCEL') {
       throw new BadRequestException('Produk ini bukan bertipe PARCEL');
     }
 
@@ -452,7 +452,7 @@ export class ProductsService {
     const product = await this.prisma.products.findFirst({
       where: { id, tenantId },
       include: {
-        productVariants: {
+        variants: {
           include: { stocks: true }
         }
       }
@@ -461,7 +461,7 @@ export class ProductsService {
     if (!product) throw new NotFoundException('Product not found');
 
     // 2. Validasi Stok (Gunakan stockQty dan BigInt sesuai error TS)
-    const hasStock = product.productVariants.some(v =>
+    const hasStock = product.variants.some(v =>
       v.stocks.some(s => s.stockQty > BigInt(0)) // Perbaikan 1: Gunakan stockQty & BigInt
     );
 
@@ -472,7 +472,7 @@ export class ProductsService {
     // 3. Eksekusi Penghapusan dalam Transaksi
     return this.prisma.$transaction(async (tx) => {
       // A. Ambil semua ID varian milik produk ini
-      const variantIds = product.productVariants.map(v => v.id);
+      const variantIds = product.variants.map(v => v.id);
 
       // B. Putus hubungan self-reference (Parent-Child)
       await tx.product_variants.updateMany({
@@ -503,7 +503,7 @@ export class ProductsService {
     return await this.prisma.$transaction(async (tx) => {
       // 1. Cari varian dan pastikan milik tenant yang benar
       const variant = await tx.product_variants.findFirst({
-        where: { id: variantId, products: { tenantId } },
+        where: { id: variantId, product: { tenantId } },
         include: {
           _count: {
             select: {
@@ -552,7 +552,7 @@ export class ProductsService {
 
       // Hapus data di price_history
       await tx.price_history.deleteMany({
-        where: { product_variant_id: variant.id }
+        where: { variantId: variant.id }
       });
 
       // Akhirnya hapus varian
@@ -589,7 +589,7 @@ export class ProductsService {
             categoryId: item.categoryId,
             name: item.name,
             type: item.type || ProductType.PHYSICAL,
-            productVariants: {
+            variants: {
               create: item.variants.map((v) => ({
                 sku: v.sku,
                 name: `${item.name} - ${v.unitName}`,
@@ -601,13 +601,13 @@ export class ProductsService {
             },
           },
           include: {
-            productVariants: true,
+            variants: true,
           },
         });
 
         // 3. Logic untuk Parent-Child (Konversi Satuan)
         // Kita cari varian yang multiplier-nya 1 (Base Unit) untuk dijadikan parent bagi yang lain
-        const baseVariant = newProduct.productVariants.find(v => v.isBaseUnit);
+        const baseVariant = newProduct.variants.find(v => v.isBaseUnit);
         if (baseVariant) {
           await tx.product_variants.updateMany({
             where: {
@@ -622,7 +622,7 @@ export class ProductsService {
 
         // 4. Handle Initial Stock (Null-Safe & BigInt Safe)
         if (storeId) {
-          for (const variant of newProduct.productVariants) {
+          for (const variant of newProduct.variants) {
             // Cari data asal dari DTO berdasarkan SKU
             const importData = item.variants.find((v) => v.sku === variant.sku);
 
@@ -670,7 +670,7 @@ export class ProductsService {
       // 1. Validasi Kepemilikan (Multi-tenancy)
       const product = await tx.products.findFirst({
         where: { id: productId, tenantId },
-        include: { productVariants: true }
+        include: { variants: true }
       });
 
       if (!product) {
@@ -681,8 +681,8 @@ export class ProductsService {
       // Cek apakah ada varian dari produk ini yang sudah pernah terjual
       const hasTransactions = await tx.transaction_items.findFirst({
         where: {
-          product_variant_id: {
-            in: product.productVariants.map(v => v.id)
+          variantId: {
+            in: product.variants.map(v => v.id)
           }
         }
       });
@@ -693,7 +693,7 @@ export class ProductsService {
         );
       }
 
-      const variantIds = product.productVariants.map(v => v.id);
+      const variantIds = product.variants.map(v => v.id);
 
       // 3. Hapus Data Inventory & Log (Urutan Berpengaruh)
       // Hapus Logs terlebih dahulu
@@ -714,7 +714,7 @@ export class ProductsService {
       // 4. Hapus Master Data Varian & Produk
       // Hapus Riwayat Harga
       await tx.price_history.deleteMany({
-        where: { product_variant_id: { in: variantIds } }
+        where: { variantId: { in: variantIds } }
       });
 
       // Hapus Komponen Parcel (jika ada)
@@ -747,7 +747,7 @@ export class ProductsService {
   // --- PRIVATE REUSABLE HELPER ---
   private async addInitialStockHelper(tx: any, variantId: number, storeId: string, qty: number, price: number, expiry?: string) {
     await tx.inventory_stock.upsert({
-      where: { variant_id_store_id: { variantId, storeId } },
+      where: { variantId_storeId: { variantId, storeId } },
       update: { stockQty: { increment: BigInt(qty) } },
       create: {
         variantId,

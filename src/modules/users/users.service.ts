@@ -4,7 +4,7 @@ import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { ChangePasswordDto } from '../user/dto/change-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class UsersService {
@@ -21,17 +21,17 @@ export class UsersService {
         id: uuidv4(),
         name: dto.name,
         email: dto.email,
-        password_hash: hashedPassword,
+        passwordHash: hashedPassword,
         role: dto.role,
-        tenant_id: tenantId,
+        tenantId: tenantId,
       },
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
-        tenant_id: true,
-        created_at: true,
+        tenantId: true,
+        createdAt: true,
       },
     });
   }
@@ -41,20 +41,20 @@ export class UsersService {
 
     const [items, total] = await Promise.all([
       this.prisma.users.findMany({
-        where: { tenant_id: tenantId },
+        where: { tenantId: tenantId },
         skip,
         take: limit,
-        orderBy: { created_at: 'desc' },
+        orderBy: { createdAt: 'desc' },
         select: {
           id: true,
           name: true,
           email: true,
           role: true,
-          is_active: true,
-          created_at: true,
+          isActive: true,
+          createdAt: true,
         },
       }),
-      this.prisma.users.count({ where: { tenant_id: tenantId } }),
+      this.prisma.users.count({ where: { tenantId: tenantId } }),
     ]);
 
     return {
@@ -71,7 +71,7 @@ export class UsersService {
 
   async updateStaff(id: string, dto: UpdateStaffDto, tenantId: string) {
     const user = await this.prisma.users.findFirst({
-      where: { id, tenant_id: tenantId },
+      where: { id, tenantId: tenantId },
     });
 
     if (!user) throw new NotFoundException('User not found in this tenant');
@@ -84,8 +84,8 @@ export class UsersService {
         name: true,
         email: true,
         role: true,
-        is_active: true,
-        updated_at: true,
+        isActive: true,
+        updatedAt: true,
       },
     });
   }
@@ -100,7 +100,7 @@ export class UsersService {
     }
 
     // 2. Verifikasi: Apakah password lama sesuai dengan yang di database?
-    const isMatch = await bcrypt.compare(dto.oldPassword, user.password_hash);
+    const isMatch = await bcrypt.compare(dto.oldPassword, user.passwordHash);
 
     if (!isMatch) {
       throw new BadRequestException('Password lama yang Anda masukkan salah');
@@ -119,8 +119,8 @@ export class UsersService {
     await this.prisma.users.update({
       where: { id: userId },
       data: {
-        password_hash: newHash,
-        updated_at: new Date()
+        passwordHash: newHash,
+        updatedAt: new Date()
       },
     });
 

@@ -8,7 +8,7 @@ import { PayDebtDto } from './dto/pay-debt.dto';
 
 // 1. Definisikan Interface untuk menampung data sementara di memori
 interface TempTransactionItem {
-  product_variant_id: number;
+  variantId: number;
   qty: number;
   unit_price: number;
   cost_price: number;
@@ -27,7 +27,7 @@ interface StockUpdateQueue {
 }
 
 interface TransactionItemInsert {
-  product_variant_id: number;
+  variantId: number;
   qty: number;
   unit_price: number;
   cost_price: number;
@@ -61,7 +61,7 @@ export class TransactionsService {
         const variant = await tx.product_variants.findUnique({
           where: { id: item.variantId },
           include: {
-            products: true,
+            product: true,
             bundleComponents: {
               include: {
                 componentVariant: {
@@ -89,7 +89,7 @@ export class TransactionsService {
         serverCalculatedTotal += finalItemSubtotal;
 
         // B. LOGIKA PENGURANGAN STOK
-        if (variant.products.type === 'PARCEL') {
+        if (variant.product.type === 'PARCEL') {
           // --- KASUS PARCEL ---
           if (variant.bundleComponents.length === 0) {
             throw new BadRequestException(`Parcel ${variant.name} belum memiliki komponen penyusun.`);
@@ -148,7 +148,7 @@ export class TransactionsService {
         }) : null;
 
         transactionItemsToCreate.push({
-          product_variant_id: item.variantId,
+          variantId: item.variantId,
           qty: item.qty,
           unit_price: actualPrice,
           cost_price: latestBatch?.purchasePrice || 0,
@@ -166,16 +166,16 @@ export class TransactionsService {
       const balanceDue = serverCalculatedTotal - dto.paidAmount;
       const transaction = await tx.transactions.create({
         data: {
-          tenant_id: tenantId,
-          store_id: dto.storeId,
-          created_by: userId,
-          shift_id: activeShift.id,
-          customer_name: dto.customerName,
-          total_amount: serverCalculatedTotal,
-          paid_amount: dto.paidAmount,
-          balance_due: balanceDue > 0 ? balanceDue : 0,
-          payment_method: dto.paymentMethod,
-          payment_status: balanceDue > 0 ? (dto.paidAmount > 0 ? PaymentStatus.PARTIAL : PaymentStatus.UNPAID) : PaymentStatus.PAID,
+          tenantId: tenantId,
+          storeId: dto.storeId,
+          createdBy: userId,
+          shiftId: activeShift.id,
+          customerName: dto.customerName,
+          totalAmount: serverCalculatedTotal,
+          paidAmount: dto.paidAmount,
+          balanceDue: balanceDue > 0 ? balanceDue : 0,
+          paymentMethod: dto.paymentMethod,
+          paymentStatus: balanceDue > 0 ? (dto.paidAmount > 0 ? PaymentStatus.PARTIAL : PaymentStatus.UNPAID) : PaymentStatus.PAID,
           metadata: dto.metadata || {},
         },
       });
@@ -201,8 +201,14 @@ export class TransactionsService {
       // --- 6. SIMPAN DETAIL TRANSAKSI ---
       await tx.transaction_items.createMany({
         data: transactionItemsToCreate.map(item => ({
-          ...item,
-          transaction_id: transaction.id
+          transactionId: transaction.id,
+          variantId: item.variantId,
+          qty: item.qty,
+          unitPrice: item.unit_price,
+          costPrice: item.cost_price,
+          discountAmount: item.discount_amount || 0,
+          taxAmount: item.tax_amount || 0,
+          subtotal: item.subtotal
         }))
       });
 
@@ -214,7 +220,7 @@ export class TransactionsService {
     const transaction = await this.prisma.transactions.findFirst({
       where: {
         id: id,
-        tenant_id: tenantId, // Keamanan: Pastikan user hanya bisa akses struk milik tenant-nya
+        tenantId: tenantId, // Keamanan: Pastikan user hanya bisa akses struk milik tenant-nya
       },
       include: {
         customer: {
@@ -223,9 +229,9 @@ export class TransactionsService {
             phone: true,
           },
         },
-        transaction_items: {
+        items: {
           include: {
-            product_variants: {
+            variant: {
               select: {
                 name: true,
                 sku: true,
@@ -234,7 +240,7 @@ export class TransactionsService {
           },
         },
         // Ambil detail toko untuk info di header struk
-        stores: {
+        store: {
           select: {
             name: true,
             address: true,
@@ -255,29 +261,29 @@ export class TransactionsService {
     // Format response untuk memudahkan frontend merender struk
     return {
       header: {
-        storeName: transaction.stores?.name,
-        address: transaction.stores?.address,
-        phone: transaction.stores?.phone,
+        storeName: transaction.store?.name,
+        address: transaction.store?.address,
+        phone: transaction.store?.phone,
         invoiceNumber: `INV-${transaction.id.toString().padStart(6, '0')}`,
-        date: transaction.transaction_date,
-        cashier: transaction.created_by, // Bisa join ke tabel users jika ingin nama asli
+        date: transaction.transactionDate,
+        cashier: transaction.createdBy, // Bisa join ke tabel users jika ingin nama asli
       },
       customer: transaction.customer || { name: 'Guest', phone: '-' },
-      items: transaction.transaction_items.map((item) => ({
-        name: item.product_variants.name,
+      items: transaction.items.map((item) => ({
+        name: item.variant.name,
         qty: item.qty,
-        price: item.unit_price,
-        discount: item.discount_amount,
-        tax: item.tax_amount,
+        price: item.unitPrice,
+        discount: item.discountAmount,
+        tax: item.taxAmount,
         subtotal: item.subtotal,
       })),
       summary: {
-        totalAmount: transaction.total_amount,
-        paidAmount: transaction.paid_amount,
-        change: transaction.paid_amount - transaction.total_amount,
-        balanceDue: transaction.balance_due,
-        paymentMethod: transaction.payment_method,
-        paymentStatus: transaction.payment_status,
+        totalAmount: transaction.totalAmount,
+        paidAmount: transaction.paidAmount,
+        change: transaction.paidAmount - transaction.totalAmount,
+        balanceDue: transaction.balanceDue,
+        paymentMethod: transaction.paymentMethod,
+        paymentStatus: transaction.paymentStatus,
         notes: transaction.metadata?.['notes'] || '',
         bankInfo: formattedMeta.bank_name,
       },
@@ -288,21 +294,21 @@ export class TransactionsService {
     return await this.prisma.$transaction(async (tx) => {
       // 1. Ambil data transaksi
       const transaction = await tx.transactions.findFirst({
-        where: { id, tenant_id: tenantId },
-        include: { transaction_items: true }
+        where: { id, tenantId: tenantId },
+        include: { items: true }
       });
 
       if (!transaction) throw new NotFoundException('Transaksi tidak ditemukan');
 
       // Gunakan casting 'as string' jika TS masih protes saat proses update enum
-      if (transaction.payment_status === (PaymentStatus.VOID as any)) {
+      if (transaction.paymentStatus === (PaymentStatus.VOID as any)) {
         throw new BadRequestException('Transaksi ini sudah dibatalkan.');
       }
 
       // 2. Kembalikan Stok
-      for (const item of transaction.transaction_items) {
+      for (const item of transaction.items) {
         const variant = await tx.product_variants.findUnique({
-          where: { id: item.product_variant_id }
+          where: { id: item.variantId }
         });
 
         if (!variant) continue;
@@ -310,9 +316,9 @@ export class TransactionsService {
         // Cari record stok (Gunakan snake_case sesuai error TS2353)
         const stockRecord = await tx.inventory_stock.findFirst({
           where: {
-            storeId: transaction.store_id,
+            storeId: transaction.storeId,
             OR: [
-              { variantId: item.product_variant_id },
+              { variantId: item.variantId },
               { variantId: variant.parentVariantId || undefined } // Gunakan parentVariantId
             ]
           }
@@ -343,7 +349,7 @@ export class TransactionsService {
       return await tx.transactions.update({
         where: { id },
         data: {
-          payment_status: PaymentStatus.VOID, // Pastikan sudah npx prisma generate
+          paymentStatus: PaymentStatus.VOID, // Pastikan sudah npx prisma generate
           metadata: {
             ...(transaction.metadata as object),
             void_reason: reason,
@@ -361,7 +367,7 @@ export class TransactionsService {
 
     // 1. Buat filter dinamis
     const whereCondition: any = {
-      tenant_id: tenantId,
+      tenantId: tenantId,
       balance_due: { gt: 0 }, // Sisa bayar lebih dari 0
       payment_status: { not: 'VOID' as any },
     };
@@ -381,13 +387,13 @@ export class TransactionsService {
         },
         take: take,
         skip: skip,
-        orderBy: { transaction_date: 'desc' }
+        orderBy: { transactionDate: 'desc' }
       }),
       this.prisma.transactions.count({ where: whereCondition }),
       // Opsional: Hitung total nominal hutang yang difilter
       this.prisma.transactions.aggregate({
         where: whereCondition,
-        _sum: { balance_due: true }
+        _sum: { balanceDue: true }
       })
     ]);
 
@@ -395,7 +401,7 @@ export class TransactionsService {
       data,
       meta: {
         total,
-        total_debt_amount: summary._sum.balance_due || 0,
+        total_debt_amount: summary._sum.balanceDue || 0,
         lastPage: Math.ceil(total / take),
         currentPage: Number(page),
         perPage: take
@@ -406,27 +412,27 @@ export class TransactionsService {
   async payDebt(transactionId: number, dto: PayDebtDto, tenantId: string) {
     // 1. Cari transaksi hutangnya
     const transaction = await this.prisma.transactions.findFirst({
-      where: { id: transactionId, tenant_id: tenantId },
+      where: { id: transactionId, tenantId: tenantId },
     });
 
     if (!transaction) throw new NotFoundException('Transaksi tidak ditemukan');
-    if (transaction.balance_due <= 0) throw new BadRequestException('Transaksi ini sudah lunas');
-    if (dto.amount > transaction.balance_due) {
-      throw new BadRequestException(`Pembayaran melebihi sisa hutang (Sisa: ${transaction.balance_due})`);
+    if (transaction.balanceDue <= 0) throw new BadRequestException('Transaksi ini sudah lunas');
+    if (dto.amount > transaction.balanceDue) {
+      throw new BadRequestException(`Pembayaran melebihi sisa hutang (Sisa: ${transaction.balanceDue})`);
     }
 
     // 2. Proses update data
     return this.prisma.$transaction(async (tx) => {
-      const newBalance = transaction.balance_due - dto.amount;
-      const newPaidAmount = transaction.paid_amount + dto.amount;
+      const newBalance = transaction.balanceDue - dto.amount;
+      const newPaidAmount = transaction.paidAmount + dto.amount;
 
       // Update tabel transaksi
       const updatedTx = await tx.transactions.update({
         where: { id: transactionId },
         data: {
-          paid_amount: newPaidAmount,
-          balance_due: newBalance,
-          payment_status: newBalance === 0 ? 'PAID' : 'PARTIAL',
+          paidAmount: newPaidAmount,
+          balanceDue: newBalance,
+          paymentStatus: newBalance === 0 ? 'PAID' : 'PARTIAL',
         },
       });
 
@@ -452,8 +458,8 @@ export class TransactionsService {
 
     // 1. Build Filter
     const whereCondition: any = {
-      tenant_id: tenantId,
-      ...(storeId && { store_id: storeId }),
+      tenantId: tenantId,
+      ...(storeId && { storeId: storeId }),
       ...(status && { payment_status: status as any }),
       ...(search && {
         OR: [
@@ -468,15 +474,15 @@ export class TransactionsService {
     const [data, total] = await Promise.all([
       this.prisma.transactions.findMany({
         where: whereCondition,
-        orderBy: { transaction_date: 'desc' },
+        orderBy: { transactionDate: 'desc' },
         take: Number(limit),
         skip: Number(skip),
         include: {
           _count: {
-            select: { transaction_items: true }
+            select: { items: true }
           },
           // Sertakan info user pembuat jika perlu ditampilkan di UI
-          users: {
+          creator: {
             select: { name: true }
           }
         }
@@ -489,13 +495,13 @@ export class TransactionsService {
       data: data.map(tx => ({
         id: `TRX-${tx.id.toString().padStart(6, '0')}`,
         db_id: tx.id, // ID asli untuk kebutuhan API Detail
-        customer: tx.customer_name || 'Pelanggan Umum',
-        total: tx.total_amount,
-        status: tx.payment_status,
-        time: tx.transaction_date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-        date: tx.transaction_date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
-        items: tx._count.transaction_items,
-        cashier: tx.users?.name
+        customer: tx.customerName || 'Pelanggan Umum',
+        total: tx.totalAmount,
+        status: tx.paymentStatus,
+        time: tx.transactionDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        date: tx.transactionDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+        items: tx._count.items,
+        cashier: tx.creator?.name
       })),
       meta: {
         total,
@@ -509,15 +515,15 @@ export class TransactionsService {
     const transaction = await this.prisma.transactions.findFirst({
       where: {
         id: id,
-        tenant_id: tenantId,
+        tenantId: tenantId,
       },
       include: {
-        users: {
+        creator: {
           select: { name: true }
         },
-        transaction_items: {
+        items: {
           include: {
-            product_variants: true
+            variant: true
           }
         }
       },
@@ -529,27 +535,27 @@ export class TransactionsService {
 
     // --- LOGIKA PERHITUNGAN TAX ---
     // Karena di schema kamu tax disimpan per item, kita kalkulasi totalnya
-    const subtotal = transaction.transaction_items.reduce((acc, item) => acc + (item.unit_price * item.qty), 0);
-    const totalTax = transaction.transaction_items.reduce((acc, item) => acc + item.tax_amount, 0);
-    const totalDiscount = transaction.transaction_items.reduce((acc, item) => acc + item.discount_amount, 0);
+    const subtotal = transaction.items.reduce((acc, item) => acc + (item.unitPrice * item.qty), 0);
+    const totalTax = transaction.items.reduce((acc, item) => acc + item.taxAmount, 0);
+    const totalDiscount = transaction.items.reduce((acc, item) => acc + item.discountAmount, 0);
 
     // Asumsi percentage pajak (misal 11%) - bisa diambil dari metadata atau setting tenant
     const taxPercentage = subtotal > 0 ? Math.round((totalTax / subtotal) * 100) : 0;
 
     return {
       db_id: transaction.id, // ID asli untuk keperluan operasional (Void, dll)
-      id: `TRX-${transaction.transaction_date.getFullYear()}-${transaction.id.toString().padStart(3, '0')}`,
-      status: transaction.payment_status,
-      date: transaction.transaction_date.toISOString().split('T')[0], // Format: YYYY-MM-DD
-      time: transaction.transaction_date.toLocaleTimeString('id-ID', { hour12: false }),
-      cashier_name: transaction.users?.name || 'Unknown',
-      customer_name: transaction.customer_name || 'Pelanggan Umum',
-      payment_method: transaction.payment_method,
-      items: transaction.transaction_items.map(item => ({
-        product_id: item.product_variant_id,
-        name: item.product_variants.name,
+      id: `TRX-${transaction.transactionDate.getFullYear()}-${transaction.id.toString().padStart(3, '0')}`,
+      status: transaction.paymentStatus,
+      date: transaction.transactionDate.toISOString().split('T')[0], // Format: YYYY-MM-DD
+      time: transaction.transactionDate.toLocaleTimeString('id-ID', { hour12: false }),
+      cashier_name: transaction.creator?.name || 'Unknown',
+      customer_name: transaction.customerName || 'Pelanggan Umum',
+      payment_method: transaction.paymentMethod,
+      items: transaction.items.map(item => ({
+        product_id: item.variantId,
+        name: item.variant.name,
         quantity: item.qty,
-        price: item.unit_price,
+        price: item.unitPrice,
         total: item.subtotal
       })),
       pricing: {
@@ -557,7 +563,7 @@ export class TransactionsService {
         tax_percentage: taxPercentage,
         tax_amount: totalTax,
         discount_amount: totalDiscount,
-        grand_total: transaction.total_amount
+        grand_total: transaction.totalAmount
       }
     };
   }

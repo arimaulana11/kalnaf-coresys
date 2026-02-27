@@ -5,7 +5,7 @@ import { UpdateStaffDto } from './dto/update-staff.dto';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { ChangePasswordDto } from '../user/dto/change-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthUser } from '../auth/interface/auth-user.interface';
 
 interface AuthenticatedRequest extends Request {

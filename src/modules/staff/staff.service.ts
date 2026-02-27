@@ -13,13 +13,13 @@ export class StaffService {
   async search(tenantId: string, query?: string) {
     return this.prisma.users.findMany({
       where: {
-        tenant_id: tenantId,
+        tenantId: tenantId,
         OR: query ? [
           { name: { contains: query, mode: 'insensitive' } },
           { email: { contains: query, mode: 'insensitive' } },
         ] : undefined,
       },
-      select: { id: true, name: true, email: true, role: true, is_active: true }
+      select: { id: true, name: true, email: true, role: true, isActive: true }
     });
   }
 
@@ -35,11 +35,11 @@ export class StaffService {
       data: {
         ...rest,
         id: uuidv4(),
-        tenant_id: tenantId,
-        password_hash: hashedPassword,
-        is_active: true,
+        tenantId: tenantId,
+        passwordHash: hashedPassword,
+        isActive: true,
       },
-      select: { id: true, name: true, email: true, role: true, is_active: true }
+      select: { id: true, name: true, email: true, role: true, isActive: true }
     });
   }
 
@@ -51,25 +51,25 @@ export class StaffService {
     const [data, total] = await Promise.all([
       this.prisma.users.findMany({
         where: {
-          tenant_id: tenantId,
+          tenantId: tenantId,
           // Optional: Jika kamu ingin memfilter agar user yang login tidak muncul di daftar
           // id: { not: currentUserId } 
         },
         skip: skip,
         take: limit,
-        orderBy: { created_at: 'desc' },
+        orderBy: { createdAt: 'desc' },
         // Pilih field yang diperlukan saja (jangan kirim password!)
         select: {
           id: true,
           name: true,
           email: true,
           role: true,
-          is_active: true,
-          created_at: true
+          isActive: true,
+          createdAt: true
         }
       }),
       this.prisma.users.count({
-        where: { tenant_id: tenantId },
+        where: { tenantId: tenantId },
       }),
     ]);
 
@@ -90,7 +90,7 @@ export class StaffService {
 
   async findOne(id: string, tenantId: string) {
     const staff = await this.prisma.users.findFirst({
-      where: { id, tenant_id: tenantId },
+      where: { id, tenantId: tenantId },
     });
     if (!staff) throw new NotFoundException('Staff not found');
     return staff;
@@ -101,14 +101,14 @@ export class StaffService {
 
     const data: any = { ...dto };
     if (dto.password) {
-      data.password_hash = await bcrypt.hash(dto.password, 10);
+      data.passwordHash = await bcrypt.hash(dto.password, 10);
       delete data.password;
     }
 
     return this.prisma.users.update({
       where: { id },
       data,
-      select: { id: true, name: true, email: true, role: true, is_active: true }
+      select: { id: true, name: true, email: true, role: true, isActive: true }
     });
   }
 
@@ -124,14 +124,14 @@ export class StaffService {
 
     return this.prisma.users.update({
       where: { id },
-      data: { is_active: isActive },
+      data: { isActive: isActive },
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
-        is_active: true,
-        updated_at: true
+        isActive: true,
+        updatedAt: true
       },
     });
   }

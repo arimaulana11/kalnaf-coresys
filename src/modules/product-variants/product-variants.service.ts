@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 // 1. Definisi Tipe Data agar TypeScript mengenali relasi bersarang yang sangat dalam
 type VariantWithRelations = Prisma.product_variantsGetPayload<{
   include: {
-    products: { include: { categories: true } };
+    product: { include: { category: true } };
     stocks: true;
     parent: { include: { stocks: true } };
     bundleComponents: {
@@ -14,8 +14,8 @@ type VariantWithRelations = Prisma.product_variantsGetPayload<{
         componentVariant: { 
           include: { 
             stocks: true;
-            products: true;
-            parent: { include: { stocks: true } }; // Penting untuk stok komponen turunan
+            product: true;
+            parent: { include: { stocks: true } }; 
           };
         };
       };
@@ -41,7 +41,7 @@ export class ProductVariantsService {
 
     // --- LOGIKA FILTER (WHERE CLAUSE) ---
     const whereClause: Prisma.product_variantsWhereInput = {
-      products: {
+      product: {
         tenantId: tenantId,
         ...(type && { type: type as any }),
       },
@@ -49,14 +49,14 @@ export class ProductVariantsService {
         OR: [
           { sku: { contains: search, mode: 'insensitive' } },
           { name: { contains: search, mode: 'insensitive' } },
-          { products: { name: { contains: search, mode: 'insensitive' } } },
+          { product: { name: { contains: search, mode: 'insensitive' } } },
         ],
       }),
       ...(isStoreIdValid && {
         OR: [
           { stocks: { some: { storeId } } },
           { parent: { stocks: { some: { storeId } } } },
-          { products: { type: 'PARCEL' } },
+          { product: { type: 'PARCEL' } },
         ],
       }),
     };
@@ -66,7 +66,7 @@ export class ProductVariantsService {
       this.prisma.product_variants.findMany({
         where: whereClause,
         include: {
-          products: { include: { categories: true } },
+          product: { include: { category: true } },
           stocks: { where: isStoreIdValid ? { storeId } : {} },
           parent: {
             include: { stocks: { where: isStoreIdValid ? { storeId } : {} } }
@@ -76,7 +76,7 @@ export class ProductVariantsService {
               componentVariant: {
                 include: { 
                   stocks: { where: isStoreIdValid ? { storeId } : {} },
-                  products: true,
+                  product: true,
                   parent: { // Menarik stok bapaknya komponen jika komponen itu unit turunan
                     include: { stocks: { where: isStoreIdValid ? { storeId } : {} } }
                   }
@@ -99,7 +99,7 @@ export class ProductVariantsService {
       let finalStock = 0;
       let componentsDetail: any[] = [];
 
-      if (variant.products.type === 'PARCEL') {
+      if (variant.product.type === 'PARCEL') {
         // A. LOGIKA PARCEL (Menghitung stok dari komponen)
         if (variant.bundleComponents && variant.bundleComponents.length > 0) {
           const availabilities = variant.bundleComponents.map((comp) => {
@@ -120,7 +120,7 @@ export class ProductVariantsService {
 
             componentsDetail.push({
               variantId: comp.componentVariantId,
-              name: `${vComp.products.name} - ${vComp.name}`,
+              name: `${vComp.product.name} - ${vComp.name}`,
               neededQty: needed,
               availableStock: componentStock,
               potentialParcelQty: potential
@@ -142,9 +142,9 @@ export class ProductVariantsService {
         }
       }
 
-      const displayName = variant.products.name === variant.name 
+      const displayName = variant.product.name === variant.name 
         ? variant.name 
-        : `${variant.products.name} - ${variant.name}`;
+        : `${variant.product.name} - ${variant.name}`;
 
       return {
         id: variant.id,
@@ -153,14 +153,14 @@ export class ProductVariantsService {
         name: displayName,
         sku: variant.sku,
         price: variant.price,
-        category: variant.products.categories?.name || 'Uncategorized',
+        category: variant.product.category?.name || 'Uncategorized',
         stock: finalStock,
         unitName: variant.unitName,
         isBaseUnit: !variant.parentVariantId,
         multiplier: variant.multiplier,
         parentName: variant.parent?.name || null,
-        productType: variant.products.type,
-        components: variant.products.type === 'PARCEL' ? componentsDetail : undefined
+        productType: variant.product.type,
+        components: variant.product.type === 'PARCEL' ? componentsDetail : undefined
       };
     });
 

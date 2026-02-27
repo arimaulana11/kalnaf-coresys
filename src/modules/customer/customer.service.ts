@@ -26,7 +26,7 @@ export class CustomersService {
                 where: { tenantId: tenantId },
                 take: take,
                 skip: skip,
-                orderBy: { created_at: 'desc' },
+                orderBy: { createdAt: 'desc' },
             }),
             this.prisma.customers.count({
                 where: { tenantId: tenantId },

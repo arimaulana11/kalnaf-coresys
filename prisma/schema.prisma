@@ -9,7 +9,10 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ==========================================
 // --- ENUMS ---
+// ==========================================
+
 enum ProductType {
   PHYSICAL
   SERVICE
@@ -25,8 +28,9 @@ enum StockLogType {
   WASTE
   TRANSFER_IN
   TRANSFER_OUT
-  VOID_RESTORE // Tambahkan ini
+  VOID_RESTORE
   BUNDLE_UNPACK
+  EXPIRED
 }
 
 enum TransactionSource {
@@ -40,71 +44,121 @@ enum PaymentStatus {
   PAID
   PARTIAL
   UNPAID
-  VOID // Tambahkan ini
+  VOID
 }
 
+// ==========================================
 // --- MULTI-TENANCY & STORES ---
+// ==========================================
 
 model tenants {
-  id         String    @id @db.Uuid
-  name       String    @db.VarChar(150)
-  plan       String    @default("basic") @db.VarChar(50)
-  is_active  Boolean?  @default(true)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-  updated_at DateTime? @updatedAt
+  id        String    @id @db.Uuid
+  name      String    @db.VarChar(150)
+  plan      String    @default("basic") @db.VarChar(50)
+  isActive  Boolean?  @default(true) @map("is_active")
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime? @updatedAt @map("updated_at")
 
-  categories    categories[]
-  products      products[]
-  stores        stores[]
-  tenant_addons tenant_addons[]
-  transactions  transactions[]
-  users         users[]
-  taxes         taxes[]
-  customers     customers[] // Relasi baru
+  categories   categories[]
+  products     products[]
+  stores       stores[]
+  tenantAddons tenant_addons[]
+  transactions transactions[]
+  users        users[]
+  taxes        taxes[]
+  customers    customers[]
+  suppliers    suppliers[]
+
+  @@map("tenants")
 }
 
 model stores {
-  id             String   @id @db.Uuid
-  tenant_id      String   @db.Uuid
-  name           String   @db.VarChar(150)
-  address        String?
-  phone          String?  @db.VarChar(20)
-  logo_url       String?
-  receipt_header String?
-  receipt_footer String?
-  is_active      Boolean? @default(true)
-  created_at     DateTime @default(now()) @db.Timestamp(6)
-  updated_at     DateTime @default(now()) @updatedAt
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  name          String   @db.VarChar(150)
+  address       String?
+  phone         String?  @db.VarChar(20)
+  logoUrl       String?  @map("logo_url")
+  receiptHeader String?  @map("receipt_header")
+  receiptFooter String?  @map("receipt_footer")
+  isActive      Boolean? @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  inventory_stock inventory_stock[]
+  inventoryStocks inventory_stock[]
   transactions    transactions[]
-  user_stores     user_stores[]
-  tenants         tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  userStores      user_stores[]
+  tenant          tenants           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   shifts          store_shifts[]
 
-  @@unique([tenant_id, name])
+  @@unique([tenantId, name])
+  @@map("stores")
 }
 
-// --- MASTER DATA: CUSTOMERS ---
-model customers {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String   @map("tenant_id") @db.Uuid
-  name       String   @db.VarChar(150)
-  phone      String?  @db.VarChar(20)
-  email      String?  @db.VarChar(150)
-  address    String?
-  metadata   Json?    // <--- Tambahkan baris ini
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+// ==========================================
+// --- MASTER DATA ---
+// ==========================================
 
-  tenants      tenants        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+model customers {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String   @db.VarChar(150)
+  phone     String?  @db.VarChar(20)
+  email     String?  @db.VarChar(150)
+  address   String?
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant       tenants        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transactions transactions[]
 
   @@unique([tenantId, phone])
   @@map("customers")
 }
 
-// --- PRODUCT, TAX & INVENTORY LOGIC ---
+model suppliers {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String   @db.VarChar(150)
+  contact   String?  @db.VarChar(100)
+  phone     String?  @db.VarChar(20)
+  email     String?  @db.VarChar(150)
+  address   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant        tenants          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stockBatches  stock_batches[]
+  inventoryLogs inventory_logs[]
+
+  @@unique([tenantId, name])
+  @@map("suppliers")
+}
+
+// ==========================================
+// --- PRODUCT & CATEGORY ---
+// ==========================================
+
+model categories {
+  id          Int      @id @default(autoincrement())
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?
+  categoryId  Int?     @map("category_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  parent   categories?  @relation("CategoryToCategory", fields: [categoryId, tenantId], references: [id, tenantId])
+  children categories[] @relation("CategoryToCategory")
+  tenant   tenants      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products products[]
+
+  @@unique([id, tenantId])
+  @@map("categories")
+}
+
 model products {
   id          Int         @id @default(autoincrement())
   tenantId    String      @map("tenant_id") @db.Uuid
@@ -114,20 +168,243 @@ model products {
   type        ProductType @default(PHYSICAL)
   imageUrl    String?     @map("image_url") @db.Text
   isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  productVariants product_variants[]
-  productTaxes    product_taxes[]
-  categories      categories         @relation(fields: [categoryId, tenantId], references: [id, tenantId])
-  tenants         tenants            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  variants     product_variants[]
+  productTaxes product_taxes[]
+  category     categories         @relation(fields: [categoryId, tenantId], references: [id, tenantId])
+  tenant       tenants            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([id, tenantId])
   @@index([tenantId])
   @@index([categoryId])
   @@map("products")
 }
+
+model product_variants {
+  id         Int     @id @default(autoincrement())
+  productId  Int     @map("product_id")
+  name       String  @db.VarChar(100)
+  sku        String? @db.VarChar(100)
+  unitName   String  @map("unit_name") @db.VarChar(20)
+  multiplier Int     @default(1)
+  isBaseUnit Boolean @default(false) @map("is_base_unit")
+  price      Int
+
+  parentVariantId Int?               @map("parent_variant_id")
+  parent          product_variants?  @relation("VariantToVariant", fields: [parentVariantId], references: [id])
+  children        product_variants[] @relation("VariantToVariant")
+
+  bundleComponents product_components[] @relation("ParentVariant")
+  asComponent      product_components[] @relation("ComponentVariant")
+
+  product          products            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stocks           inventory_stock[]
+  priceHistories   price_history[]
+  transactionItems transaction_items[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sku])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model product_components {
+  id                 Int @id @default(autoincrement())
+  parentVariantId    Int @map("parent_variant_id")
+  componentVariantId Int @map("component_variant_id")
+  qty                Int
+
+  parentVariant    product_variants @relation("ParentVariant", fields: [parentVariantId], references: [id], onDelete: Cascade)
+  componentVariant product_variants @relation("ComponentVariant", fields: [componentVariantId], references: [id], onDelete: Cascade)
+
+  @@unique([parentVariantId, componentVariantId])
+  @@map("product_components")
+}
+
+// ==========================================
+// --- INVENTORY LOGIC ---
+// ==========================================
+
+model inventory_stock {
+  id        Int    @id @default(autoincrement())
+  storeId   String @map("store_id") @db.Uuid
+  variantId Int    @map("variant_id")
+  stockQty  BigInt @default(0) @map("stock_qty")
+
+  variant       product_variants @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  store         stores           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  stockBatches  stock_batches[]
+  inventoryLogs inventory_logs[]
+
+  @@unique([variantId, storeId])
+  @@map("inventory_stocks")
+}
+
+model stock_batches {
+  id               Int       @id @default(autoincrement())
+  inventoryStockId Int       @map("inventory_stock_id")
+  supplierId       String?   @map("supplier_id") @db.Uuid
+  batchNumber      String?   @map("batch_number")
+  qty              Int
+  expiryDate       DateTime? @map("expiry_date")
+  purchasePrice    Int       @map("purchase_price")
+  unitPrice        Int?      @map("unit_price")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  inventoryStock inventory_stock @relation(fields: [inventoryStockId], references: [id], onDelete: Cascade)
+  supplier       suppliers?      @relation(fields: [supplierId], references: [id])
+
+  @@map("stock_batches")
+}
+
+model inventory_logs {
+  id               Int          @id @default(autoincrement())
+  inventoryStockId Int          @map("inventory_stock_id")
+  supplierId       String?      @map("supplier_id") @db.Uuid
+  type             StockLogType
+  qtyChange        Int          @map("qty_change")
+  referenceId      String?      @map("reference_id")
+  notes            String?
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  supplier       suppliers?      @relation(fields: [supplierId], references: [id])
+  inventoryStock inventory_stock @relation(fields: [inventoryStockId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_logs")
+}
+
+// ==========================================
+// --- TRANSACTIONS ---
+// ==========================================
+
+model transactions {
+  id              Int               @id @default(autoincrement())
+  tenantId        String            @map("tenant_id") @db.Uuid
+  storeId         String            @map("store_id") @db.Uuid
+  createdBy       String            @map("created_by") @db.Uuid
+  shiftId         String            @map("shift_id") @db.Uuid
+  customerId      String?           @map("customer_id") @db.Uuid
+  customerName    String?           @map("customer_name") @db.VarChar(100)
+  totalAmount     Int               @map("total_amount")
+  paidAmount      Int               @default(0) @map("paid_amount")
+  balanceDue      Int               @default(0) @map("balance_due")
+  paymentMethod   String            @map("payment_method")
+  paymentStatus   PaymentStatus     @default(PAID) @map("payment_status")
+  totalDiscount   Int               @default(0) @map("total_discount")
+  transactionDate DateTime          @default(now()) @map("transaction_date") @db.Timestamp(6)
+  source          TransactionSource @default(OFFLINE_POS)
+  metadata        Json?
+
+  items    transaction_items[]
+  tenant   tenants             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store    stores              @relation(fields: [storeId], references: [id])
+  creator  users               @relation(fields: [createdBy], references: [id])
+  shift    store_shifts        @relation(fields: [shiftId], references: [id])
+  customer customers?          @relation(fields: [customerId], references: [id])
+
+  @@index([tenantId, storeId])
+  @@map("transactions")
+}
+
+model transaction_items {
+  id             Int @id @default(autoincrement())
+  transactionId  Int @map("transaction_id")
+  variantId      Int @map("product_variant_id")
+  qty            Int
+  unitPrice      Int @map("unit_price")
+  costPrice      Int @map("cost_price")
+  taxAmount      Int @default(0) @map("tax_amount")
+  discountAmount Int @default(0) @map("discount_amount")
+  subtotal       Int
+
+  variant     product_variants @relation(fields: [variantId], references: [id])
+  transaction transactions     @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([variantId])
+  @@map("transaction_items")
+}
+
+model store_shifts {
+  id           String    @id @default(uuid()) @db.Uuid
+  storeId      String    @map("store_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  startTime    DateTime  @default(now()) @map("start_time")
+  endTime      DateTime? @map("end_time")
+  startingCash Int       @default(0) @map("starting_cash")
+  closingCash  Int?      @map("closing_cash")
+  status       String    @default("OPEN")
+
+  store        stores         @relation(fields: [storeId], references: [id])
+  user         users          @relation(fields: [userId], references: [id])
+  transactions transactions[]
+
+  @@map("store_shifts")
+}
+
+// ==========================================
+// --- AUTH & USERS ---
+// ==========================================
+
+model users {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  name         String?   @db.VarChar(150)
+  email        String    @unique @db.VarChar(150)
+  passwordHash String    @map("password_hash")
+  role         String    @default("owner") @db.VarChar(50)
+  isActive     Boolean?  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamp(6)
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime? @updatedAt @map("updated_at")
+
+  refreshTokens refresh_tokens[]
+  transactions  transactions[]
+  userStores    user_stores[]
+  tenant        tenants          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shifts        store_shifts[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model user_stores {
+  userId    String    @map("user_id") @db.Uuid
+  storeId   String    @map("store_id") @db.Uuid
+  status    String    @default("active") @db.VarChar(20)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamp(6)
+
+  store stores @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  users  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, storeId])
+  @@map("user_stores")
+}
+
+model refresh_tokens {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamp(6)
+  revoked   Boolean?  @default(false)
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  user users @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ==========================================
+// --- TAXES & HISTORY ---
+// ==========================================
 
 model taxes {
   id       Int     @id @default(autoincrement())
@@ -137,7 +414,7 @@ model taxes {
   isActive Boolean @default(true) @map("is_active")
 
   productTaxes product_taxes[]
-  tenants      tenants         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant       tenants         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("taxes")
 }
@@ -146,277 +423,53 @@ model product_taxes {
   productId Int @map("product_id")
   taxId     Int @map("tax_id")
 
-  products products @relation(fields: [productId], references: [id], onDelete: Cascade)
-  taxes    taxes    @relation(fields: [taxId], references: [id], onDelete: Cascade)
+  product products @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tax     taxes    @relation(fields: [taxId], references: [id], onDelete: Cascade)
 
   @@id([productId, taxId])
   @@map("product_taxes")
 }
 
-model product_variants {
-  id              Int      @id @default(autoincrement())
-  productId       Int      @map("product_id")
-  name            String   @db.VarChar(100)
-  sku             String?  @db.VarChar(100)
-  unitName        String   @map("unit_name") @db.VarChar(20)
-  multiplier      Int      @default(1)
-  isBaseUnit      Boolean  @default(false) @map("is_base_unit")
-  price           Int
-  
-  // Relasi Konversi Satuan (Grosir/Eceran) yang sudah ada
-  parentVariantId Int?               @map("parent_variant_id")
-  parent          product_variants?  @relation("VariantToVariant", fields: [parentVariantId], references: [id])
-  children        product_variants[] @relation("VariantToVariant")
+model price_history {
+  id         Int       @id @default(autoincrement())
+  variantId  Int       @map("product_variant_id")
+  oldPrice   Int?      @map("old_price")
+  newPrice   Int       @map("new_price")
+  changeDate DateTime? @default(now()) @map("change_date") @db.Timestamp(6)
+  notes      String?
 
-  // --- PERBAIKAN RELASI PARCEL ---
-  // Variant ini bisa punya banyak komponen (Jika dia adalah sebuah PARCEL)
-  bundleComponents  product_components[] @relation("ParentVariant")
-  
-  // Variant ini bisa menjadi bagian dari banyak parcel lain (Jika dia adalah ISI PARCEL)
-  asComponent       product_components[] @relation("ComponentVariant")
+  variant product_variants @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  products          products             @relation(fields: [productId], references: [id], onDelete: Cascade)
-  stocks            inventory_stock[]
-  priceHistory      price_history[]
-  transactionItems  transaction_items[]
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@index([sku])
-  @@index([productId])
-  @@index([parentVariantId])
-  @@map("product_variants")
+  @@map("price_histories")
 }
 
-model product_components {
-  id                 Int @id @default(autoincrement())
-  parentVariantId    Int @map("parent_variant_id")    // ID si Parcel-nya
-  componentVariantId Int @map("component_variant_id") // ID barang di dalamnya
-  qty                Int // Jumlah barang tersebut di dalam 1 parcel
-
-  // Relasi diperjelas
-  parentVariant    product_variants @relation("ParentVariant", fields: [parentVariantId], references: [id], onDelete: Cascade)
-  componentVariant product_variants @relation("ComponentVariant", fields: [componentVariantId], references: [id], onDelete: Cascade)
-
-  @@unique([parentVariantId, componentVariantId]) // Menghindari duplikasi komponen yang sama dalam satu parcel
-  @@map("product_components")
-}
-
-model inventory_stock {
-  id       Int    @id @default(autoincrement())
-  storeId  String @map("store_id") @db.Uuid
-  variantId Int    @map("variant_id")
-  stockQty  BigInt @default(0) @map("stock_qty")
-
-  variant       product_variants @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  stores        stores           @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  stockBatches  stock_batches[]
-  inventoryLogs inventory_logs[]
-
-  @@unique([variantId, storeId], name: "variant_id_store_id")
-  @@map("inventory_stock")
-}
-
-model stock_batches {
-  id               Int       @id @default(autoincrement())
-  inventoryStockId Int       @map("inventory_stock_id")
-  batchNumber      String?   @map("batch_number")
-  qty              Int
-  expiryDate       DateTime? @map("expiry_date")
-  purchasePrice    Int       @map("purchase_price")
-  createdAt        DateTime  @default(now()) @map("created_at")
-
-  inventoryStock inventory_stock @relation(fields: [inventoryStockId], references: [id], onDelete: Cascade)
-
-  @@map("stock_batches")
-}
-
-model inventory_logs {
-  id               Int          @id @default(autoincrement())
-  inventoryStockId Int          @map("inventory_stock_id")
-  type             StockLogType
-  qtyChange        Int          @map("qty_change")
-  referenceId      String?      @map("reference_id")
-  notes            String?
-  createdAt        DateTime     @default(now()) @map("created_at")
-
-  inventoryStock inventory_stock @relation(fields: [inventoryStockId], references: [id], onDelete: Cascade)
-
-  @@map("inventory_logs")
-}
-
-// --- TRANSACTIONS ---
-
-model store_shifts {
-  id           String    @id @default(uuid()) @db.Uuid
-  storeId      String    @db.Uuid 
-  userId       String    @db.Uuid 
-  
-  startTime    DateTime  @default(now())
-  endTime      DateTime?
-  startingCash Int       @default(0)
-  closingCash  Int?
-  status       String    @default("OPEN")
-  
-  store        stores    @relation(fields: [storeId], references: [id])
-  user         users     @relation(fields: [userId], references: [id])
-  transactions transactions[]
-}
-
-model transactions {
-  id               Int               @id @default(autoincrement())
-  tenant_id        String            @db.Uuid
-  store_id         String            @db.Uuid
-  created_by       String            @db.Uuid
-  shift_id         String            @db.Uuid
-  customer_id      String?           @db.Uuid 
-  customer_name    String?           @db.VarChar(100)
-  
-  total_amount     Int
-  paid_amount      Int               @default(0)
-  balance_due      Int               @default(0)
-  payment_method   String
-  payment_status   PaymentStatus     @default(PAID)
-  total_discount   Int               @default(0)
-  
-  transaction_date DateTime          @default(now()) @db.Timestamp(6)
-  source           TransactionSource @default(OFFLINE_POS)
-  metadata         Json? 
-
-  transaction_items transaction_items[]
-  tenants           tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-  stores            stores            @relation(fields: [store_id], references: [id])
-  users             users             @relation(fields: [created_by], references: [id])
-  shift             store_shifts      @relation(fields: [shift_id], references: [id])
-  customer          customers?        @relation(fields: [customer_id], references: [id]) // Relasi ke tabel Customer
-
-  @@index([created_by])
-  @@index([tenant_id, store_id])
-}
-
-model transaction_items {
-  id                  Int @id @default(autoincrement())
-  transaction_id      Int
-  product_variant_id  Int
-  qty                 Int
-  unit_price          Int
-  cost_price          Int      // Snapshot HPP
-  tax_amount          Int @default(0)
-  discount_amount     Int @default(0)
-  subtotal            Int
-
-  product_variants product_variants @relation(fields: [product_variant_id], references: [id])
-  transactions      transactions     @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-
-  @@index([transaction_id])
-  @@index([product_variant_id])
-}
-
-// --- USER & AUTH ---
-
-model users {
-  id            String    @id @db.Uuid
-  tenant_id     String    @db.Uuid
-  name          String?   @db.VarChar(150)
-  email         String    @unique @db.VarChar(150)
-  password_hash String
-  role          String    @default("owner") @db.VarChar(50)
-  is_active     Boolean?  @default(true)
-  last_login_at DateTime? @db.Timestamp(6)
-  created_at    DateTime? @default(now()) @db.Timestamp(6)
-  updated_at    DateTime? @updatedAt
-
-  refresh_tokens refresh_tokens[]
-  transactions   transactions[]
-  user_stores    user_stores[]
-  tenants        tenants          @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-  store_shifts store_shifts[]
-
-  @@index([tenant_id])
-}
-
-model user_stores {
-  user_id    String    @db.Uuid
-  store_id   String    @db.Uuid
-  status     String    @default("active") @db.VarChar(20)
-  created_at DateTime  @default(now()) @db.Timestamp(6)
-  updated_at DateTime  @default(now()) @updatedAt
-  deleted_at DateTime? @db.Timestamp(6)
-
-  stores stores @relation(fields: [store_id], references: [id], onDelete: Cascade)
-  users  users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@id([user_id, store_id])
-}
-
-model refresh_tokens {
-  id          String    @id @db.Uuid
-  user_id     String    @db.Uuid
-  token_hash  String    @unique
-  expires_at  DateTime  @db.Timestamp(6)
-  revoked     Boolean?  @default(false)
-  created_at  DateTime? @default(now()) @db.Timestamp(6)
-
-  users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([token_hash])
-  @@index([user_id])
-}
+// ==========================================
+// --- ADDONS SYSTEM ---
+// ==========================================
 
 model addons {
-  id            String          @id @db.Uuid
-  code          String          @unique @db.VarChar(50)
-  name          String          @db.VarChar(150)
-  description   String?
-  price_monthly Int
-  created_at    DateTime?       @default(now()) @db.Timestamp(6)
-  tenant_addons tenant_addons[]
+  id           String          @id @db.Uuid
+  code         String          @unique @db.VarChar(50)
+  name         String          @db.VarChar(150)
+  description  String?
+  priceMonthly Int             @map("price_monthly")
+  createdAt    DateTime?       @default(now()) @map("created_at") @db.Timestamp(6)
+  tenantAddons tenant_addons[]
+
+  @@map("addons")
 }
 
 model tenant_addons {
-  id           String    @id @db.Uuid
-  tenant_id    String    @db.Uuid
-  addon_id     String    @db.Uuid
-  status       String    @default("active") @db.VarChar(20)
-  activated_at DateTime  @default(now()) @db.Timestamp(6)
-  expires_at   DateTime? @db.Timestamp(6)
-  auto_renew   Boolean   @default(true)
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  addonId     String    @map("addon_id") @db.Uuid
+  status      String    @default("active") @db.VarChar(20)
+  activatedAt DateTime  @default(now()) @map("activated_at") @db.Timestamp(6)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamp(6)
+  autoRenew   Boolean   @default(true) @map("auto_renew")
 
-  addons  addons  @relation(fields: [addon_id], references: [id], onDelete: Cascade)
-  tenants tenants @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-}
+  addon  addons  @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  tenant tenants @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-model categories {
-  id          Int      @id @default(autoincrement())
-  tenantId    String   @map("tenant_id") @db.Uuid
-  name        String   @db.VarChar(100)
-  description String?
-  
-  // 1. Tambahkan kolom ini sebagai penampung ID Parent
-  categoryId  Int?     @map("category_id") 
-
-  created_at  DateTime @default(now()) 
-  updated_at  DateTime @updatedAt
-
-  // 2. Perbaiki relasi self-relation (Parent-Child)
-  parent      categories?  @relation("CategoryToCategory", fields: [categoryId, tenantId], references: [id, tenantId])
-  children    categories[] @relation("CategoryToCategory")
-  
-  tenants     tenants      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  products    products[]
-
-  @@unique([id, tenantId])
-  @@map("categories")
-}
-
-model price_history {
-  id                 Int       @id @default(autoincrement())
-  product_variant_id Int
-  old_price          Int?
-  new_price          Int
-  change_date        DateTime? @default(now()) @db.Timestamp(6)
-  notes              String?
-
-  product_variants product_variants @relation(fields: [product_variant_id], references: [id], onDelete: Cascade)
+  @@map("tenant_addons")
 }

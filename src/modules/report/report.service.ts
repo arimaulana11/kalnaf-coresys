@@ -30,27 +30,27 @@ export class ReportsService {
 
     const summary = await this.prisma.transactions.aggregate({
       where: {
-        store_id: storeId,
-        tenant_id: tenantId,
-        transaction_date: {
+        storeId: storeId,
+        tenantId: tenantId,
+        transactionDate: {
           gte: startDate ? new Date(startDate) : undefined,
           lte: endDate ? new Date(endDate) : undefined,
         },
-        payment_status: { not: 'VOID' as any },
+        paymentStatus: { not: 'VOID' as any },
       },
       _sum: {
-        total_amount: true,
-        paid_amount: true,
-        balance_due: true,
+        totalAmount: true,
+        paidAmount: true,
+        balanceDue: true,
       },
       _count: { id: true },
     });
 
     return {
       total_transactions: summary._count.id || 0,
-      gross_sales: summary._sum.total_amount || 0,
-      total_collected: summary._sum.paid_amount || 0,
-      total_unpaid: summary._sum.balance_due || 0,
+      gross_sales: summary._sum.totalAmount || 0,
+      total_collected: summary._sum.paidAmount || 0,
+      total_unpaid: summary._sum.balanceDue || 0,
     };
   }
 
@@ -67,18 +67,18 @@ export class ReportsService {
 
     const summary = await this.prisma.transactions.aggregate({
       where: {
-        store_id: storeId,
-        tenant_id: tenantId,
-        transaction_date: {
+        storeId: storeId,
+        tenantId: tenantId,
+        transactionDate: {
           gte: startOfDay,
           lte: endOfDay,
         },
-        payment_status: { not: 'VOID' as any },
+        paymentStatus: { not: 'VOID' as any },
       },
       _sum: {
-        total_amount: true,
-        paid_amount: true,
-        balance_due: true,
+        totalAmount: true,
+        paidAmount: true,
+        balanceDue: true,
       },
       _count: { id: true },
     });
@@ -86,9 +86,9 @@ export class ReportsService {
     return {
       date: startOfDay.toISOString().split('T')[0],
       total_transactions: summary._count.id || 0,
-      gross_sales: summary._sum.total_amount || 0,
-      total_collected: summary._sum.paid_amount || 0,
-      total_unpaid: summary._sum.balance_due || 0,
+      gross_sales: summary._sum.totalAmount || 0,
+      total_collected: summary._sum.paidAmount || 0,
+      total_unpaid: summary._sum.balanceDue || 0,
     };
   }
 
@@ -100,12 +100,12 @@ export class ReportsService {
     const { skip, take, page } = this.getPagination(query);
 
     const result = await this.prisma.transaction_items.groupBy({
-      by: ['product_variant_id'],
+      by: ['variantId'],
       where: {
-        transactions: {
-          store_id: query.storeId,
-          tenant_id: tenantId,
-          payment_status: { not: 'VOID' as any },
+        transaction: {
+          storeId: query.storeId,
+          tenantId: tenantId,
+          paymentStatus: { not: 'VOID' as any },
         },
       },
       _sum: { qty: true, subtotal: true },
@@ -117,7 +117,7 @@ export class ReportsService {
     const data = await Promise.all(
       result.map(async (item) => {
         const variant = await this.prisma.product_variants.findUnique({
-          where: { id: item.product_variant_id },
+          where: { id: item.variantId },
           select: { name: true },
         });
         return {
@@ -142,18 +142,18 @@ export class ReportsService {
     const summary = await this.prisma.transactions.groupBy({
       by: ['payment_method' as any],
       where: {
-        store_id: storeId,
-        tenant_id: tenantId,
-        payment_status: { not: 'VOID' as any },
+        storeId: storeId,
+        tenantId: tenantId,
+        paymentStatus: { not: 'VOID' as any },
       },
-      _sum: { total_amount: true },
+      _sum: { totalAmount: true },
       _count: { id: true },
     });
 
     return summary.map((item) => ({
       method: item['payment_method' as any],
       count: item._count.id,
-      total_amount: item._sum.total_amount || 0,
+      totalAmount: item._sum.totalAmount || 0,
     }));
   }
 
@@ -164,18 +164,18 @@ export class ReportsService {
   async getDebtSummary(storeId: string, tenantId: string) {
     const debt = await this.prisma.transactions.aggregate({
       where: {
-        store_id: storeId,
-        tenant_id: tenantId,
-        balance_due: { gt: 0 },
-        payment_status: { not: 'VOID' as any },
+        storeId: storeId,
+        tenantId: tenantId,
+        balanceDue: { gt: 0 },
+        paymentStatus: { not: 'VOID' as any },
       },
-      _sum: { balance_due: true },
+      _sum: { balanceDue: true },
       _count: { id: true },
     });
 
     return {
       unpaid_transaction_count: debt._count.id || 0,
-      total_outstanding_debt: debt._sum.balance_due || 0,
+      total_outstanding_debt: debt._sum.balanceDue || 0,
     };
   }
 
@@ -189,12 +189,12 @@ export class ReportsService {
 
     const transactions = await this.prisma.transactions.findMany({
       where: {
-        store_id: storeId,
-        tenant_id: tenantId,
-        transaction_date: { gte: startDate },
-        payment_status: { not: 'VOID' as any },
+        storeId: storeId,
+        tenantId: tenantId,
+        transactionDate: { gte: startDate },
+        paymentStatus: { not: 'VOID' as any },
       },
-      select: { total_amount: true, transaction_date: true },
+      select: { totalAmount: true, transactionDate: true },
     });
 
     const monthlyStats = Array(12).fill(0).map((_, i) => ({
@@ -203,8 +203,8 @@ export class ReportsService {
     }));
 
     transactions.forEach((tx) => {
-      const monthIndex = new Date(tx.transaction_date).getMonth();
-      monthlyStats[monthIndex].total_sales += tx.total_amount;
+      const monthIndex = new Date(tx.transactionDate).getMonth();
+      monthlyStats[monthIndex].total_sales += tx.totalAmount;
     });
 
     return monthlyStats;
@@ -221,19 +221,19 @@ export class ReportsService {
     const performance = await this.prisma.transactions.groupBy({
       by: ['created_by' as any],
       where: {
-        store_id: query.storeId,
-        tenant_id: tenantId,
-        payment_status: { not: 'VOID' as any },
+        storeId: query.storeId,
+        tenantId: tenantId,
+        paymentStatus: { not: 'VOID' as any },
       },
       _sum: {
-        total_amount: true,
+        totalAmount: true,
       },
       _count: {
         id: true,
       },
       orderBy: {
         _sum: {
-          total_amount: 'desc',
+          totalAmount: 'desc',
         },
       },
       skip,
@@ -254,7 +254,7 @@ export class ReportsService {
           staff_id: staffId,
           staff_name: user?.name || 'Staff Tidak Dikenal',
           transaction_count: item._count.id,
-          total_sales: item._sum.total_amount || 0,
+          total_sales: item._sum.totalAmount || 0,
         };
       }),
     );
@@ -272,9 +272,9 @@ export class ReportsService {
     const { startDate, endDate, page, limit } = query;
     const skip = (page - 1) * limit;
 
-    // Filter berdasarkan field 'transaction_date' sesuai schema
+    // Filter berdasarkan field 'transactionDate' sesuai schema
     const dateFilter = {
-      transaction_date: {
+      transactionDate: {
         ...(startDate && { gte: new Date(startDate) }),
         ...(endDate && { lte: new Date(endDate) }),
       },
@@ -285,34 +285,34 @@ export class ReportsService {
 
       // 1. Summary Agregat untuk status PAID
       this.prisma.transactions.aggregate({
-        where: { ...dateFilter, payment_status: 'PAID' },
-        _sum: { total_amount: true },
+        where: { ...dateFilter, paymentStatus: 'PAID' },
+        _sum: { totalAmount: true },
         _count: { id: true },
-        _avg: { total_amount: true },
+        _avg: { totalAmount: true },
       }),
 
       // 2. Summary Agregat untuk status VOID
       this.prisma.transactions.aggregate({
-        where: { ...dateFilter, payment_status: 'VOID' },
-        _sum: { total_amount: true },
+        where: { ...dateFilter, paymentStatus: 'VOID' },
+        _sum: { totalAmount: true },
         _count: { id: true },
       }),
 
       // 3. Breakdown per Metode Pembayaran
       this.prisma.transactions.groupBy({
-        by: ['payment_method'],
-        where: { ...dateFilter, payment_status: 'PAID' },
-        _sum: { total_amount: true },
+        by: ['paymentMethod'],
+        where: { ...dateFilter, paymentStatus: 'PAID' },
+        _sum: { totalAmount: true },
       }),
 
       // 4. Produk Terlaris (Top 5)
       // Relasi di schema: transaction_items -> transactions
       this.prisma.transaction_items.groupBy({
-        by: ['product_variant_id'], // Kita group by ID dulu
+        by: ['variantId'], // Kita group by ID dulu
         where: {
-          transactions: {
+          transaction: {
             ...dateFilter,
-            payment_status: 'PAID',
+            paymentStatus: 'PAID',
           },
         },
         _sum: { qty: true, subtotal: true },
@@ -325,10 +325,10 @@ export class ReportsService {
         where: dateFilter,
         skip,
         take: limit,
-        orderBy: { transaction_date: 'desc' },
+        orderBy: { transactionDate: 'desc' },
         include: {
           // Opsional: Jika ingin nama user/kasir muncul
-          users: { select: { name: true } }
+          creator: { select: { name: true } }
         }
       }),
 
@@ -340,7 +340,7 @@ export class ReportsService {
     const topProductsWithNames = await Promise.all(
       topProducts.map(async (item) => {
         const variant = await this.prisma.product_variants.findUnique({
-          where: { id: item.product_variant_id },
+          where: { id: item.variantId },
           select: { name: true }
         });
         return {
@@ -353,26 +353,26 @@ export class ReportsService {
 
     return {
       summary: {
-        revenue: summaryData._sum.total_amount || 0,
+        revenue: summaryData._sum.totalAmount || 0,
         transactions_count: summaryData._count.id || 0,
-        average_per_order: Math.round(summaryData._avg.total_amount || 0),
-        total_void_amount: voidData._sum.total_amount || 0,
+        average_per_order: Math.round(summaryData._avg.totalAmount || 0),
+        total_void_amount: voidData._sum.totalAmount || 0,
         total_void_count: voidData._count.id || 0,
       },
       payment_methods: paymentMethods.map(p => ({
-        method: p.payment_method,
-        total: p._sum.total_amount || 0
+        method: p.paymentMethod,
+        total: p._sum.totalAmount || 0
       })),
       top_products: topProductsWithNames,
       records: records.map(r => ({
         id: r.id,
-        customer_name: r.customer_name || 'Umum',
-        total_amount: r.total_amount,
-        payment_status: r.payment_status,
-        payment_method: r.payment_method,
-        cashier: r.users?.name,
-        date: r.transaction_date,
-        time: r.transaction_date.toLocaleTimeString('id-ID', {
+        customer_name: r.customerName || 'Umum',
+        totalAmount: r.totalAmount,
+        paymentStatus: r.paymentStatus,
+        payment_method: r.paymentMethod,
+        cashier: r.creator?.name,
+        date: r.transactionDate,
+        time: r.transactionDate.toLocaleTimeString('id-ID', {
           hour: '2-digit',
           minute: '2-digit'
         })

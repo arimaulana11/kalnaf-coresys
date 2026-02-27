@@ -38,7 +38,7 @@ export class CategoryService {
         where: { tenantId: tenantId },
         skip: skip,
         take: limit,
-        orderBy: { created_at: 'desc' }, // Menampilkan kategori terbaru di atas
+        orderBy: { createdAt: 'desc' }, // Menampilkan kategori terbaru di atas
       }),
       this.prisma.categories.count({
         where: { tenantId: tenantId },
