@@ -8,7 +8,8 @@ import {
     Query,
     Headers as NestHeaders,
     Param,
-    ParseIntPipe
+    ParseIntPipe,
+    BadRequestException
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { JwtGuard } from '../../common/guards/jwt.guard';
@@ -17,7 +18,10 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../auth/interface/auth-user.interface';
 import { StockInDto } from './dto/stock-in.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
-import { StockOpnameDto, StockTransferDto } from './dto/stock-movement.dto';
+import { StockTransferDto } from './dto/stock-movement.dto';
+import { GetStockOpnameProductsDto } from './get-stock-opname-products.dto';
+import { FinalizeStockOpnameDto } from './dto/finalize-stock-opname.dto';
+import { GetInventoryHistoryDto, GetOpnameDetailParamDto } from './dto/get-inventory-history.dto';
 
 interface AuthenticatedRequest extends Request {
     user: AuthUser;
@@ -83,14 +87,45 @@ export class InventoryController {
         return this.inventoryService.processTransfer(req.user.tenantId, dto);
     }
 
-    @Post('opname')
+    @Post('stock-opname/finalize')
     @Roles('owner')
-    async stockOpname(
+    async processOpname(
         @Req() req: AuthenticatedRequest,
-        @NestHeaders('store-id') storeId: string,
-        @Body() dto: StockOpnameDto,
+        @Body() dto: FinalizeStockOpnameDto
     ) {
-        return this.inventoryService.processOpname(req.user.tenantId, storeId, dto);
+        if (!dto || Object.keys(dto).length === 0) {
+            throw new BadRequestException('Body request kosong atau format JSON salah');
+        }
+
+        return this.inventoryService.processOpname(req.user.tenantId, dto);
+    }
+
+    @Get('stock-opname/products')
+    @Roles('owner')
+    async getProductsForOpname(
+        @Req() req: AuthenticatedRequest,
+        query: GetStockOpnameProductsDto) {
+        return this.inventoryService.getProductsForOpname(req.user.tenantId, query || {});
+    }
+
+    @Get('stock-opname/history')
+    @Roles('owner')
+    async getHistory(
+        @Req() req: AuthenticatedRequest,
+        @Query() query: GetInventoryHistoryDto,
+    ) {
+        const tenantId = req.user.tenantId;
+        return this.inventoryService.getStockOpnameHistory(tenantId, query);
+    }
+
+    @Get('stock-opname/history/:referenceId')
+    @Roles('owner')
+    async getHistoryDetail(
+        @Req() req: AuthenticatedRequest,
+        @Param() params: GetOpnameDetailParamDto
+    ) {
+        const tenantId = req.user.tenantId;
+        return this.inventoryService.getOpnameDetailByReference(tenantId, params.referenceId);
     }
 
     @Get('history/:variantId')
@@ -99,7 +134,7 @@ export class InventoryController {
         @Req() req: AuthenticatedRequest,
         @Param('variantId', ParseIntPipe) variantId: number,
         @Query('storeId') storeId: string,
-        @Query('page') page?: any, // Gunakan any sementara atau string
+        @Query('page') page?: any,
         @Query('limit') limit?: any,
     ) {
         return this.inventoryService.getVariantHistory(req.user.tenantId, variantId, {

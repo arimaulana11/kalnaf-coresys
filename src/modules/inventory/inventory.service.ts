@@ -4,10 +4,51 @@ import { PrismaService } from '../../database/prisma.service';
 import { StockLogType } from '@prisma/client';
 import { StockInDto } from './dto/stock-in.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
-import { StockOpnameDto, StockTransferDto } from './dto/stock-movement.dto';
+import { StockTransferDto } from './dto/stock-movement.dto';
+import { GetStockOpnameProductsDto } from './get-stock-opname-products.dto';
+import { FinalizeStockOpnameDto } from './dto/finalize-stock-opname.dto';
+import { GetInventoryHistoryDto } from './dto/get-inventory-history.dto';
 
+export interface AuditResult {
+    variantId: number;
+    prevQty: number;
+    newQty: number;
+    diff: number;
+}
 @Injectable()
 export class InventoryService {
+
+    private async generateReferenceId(): Promise<string> {
+        const now = new Date();
+        const year = now.getFullYear(); // 2026
+
+        // 1. Cari log terakhir yang punya format OPN-2026-
+        const lastLog = await this.prisma.inventory_logs.findFirst({
+            where: {
+                referenceId: {
+                    startsWith: `OPN-${year}-`,
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+            select: { referenceId: true },
+        });
+
+        let nextNumber = 1;
+
+        if (lastLog?.referenceId) {
+            const segments = lastLog.referenceId.split('-');
+            const lastNum = segments[segments.length - 1]; // Lebih aman daripada .pop()
+
+            if (lastNum) {
+                nextNumber = parseInt(lastNum, 10) + 1;
+            }
+        }
+
+        return `OPN-${year}-${String(nextNumber).padStart(3, '0')}`;
+    }
+
     constructor(private prisma: PrismaService) { }
 
     async findAllStock(tenantId: string, storeId: string) {
@@ -207,64 +248,6 @@ export class InventoryService {
         });
     }
 
-    async processOpname(tenantId: string, storeId: string, dto: StockOpnameDto) {
-        if (!storeId) throw new BadRequestException('Header store-id diperlukan');
-
-        // 1. Validasi varian dan kepemilikan
-        const variant = await this.prisma.product_variants.findFirst({
-            where: { id: dto.variantId, product: { tenantId } }
-        });
-        if (!variant) throw new BadRequestException('Varian tidak ditemukan');
-
-        return this.prisma.$transaction(async (tx) => {
-            // 2. Ambil stok saat ini
-            const currentStock = await tx.inventory_stock.findUnique({
-                where: {
-                    variantId_storeId: {
-                        variantId: dto.variantId,
-                        storeId: storeId
-                    }
-                }
-            });
-
-            const systemQty = currentStock ? Number(currentStock.stockQty) : 0;
-            const diff = dto.actualQty - systemQty; // Hitung selisihnya
-
-            // 3. Update stok menjadi angka aktual
-            const stock = await tx.inventory_stock.upsert({
-                where: {
-                    variantId_storeId: {
-                        variantId: dto.variantId,
-                        storeId: storeId
-                    }
-                },
-                update: { stockQty: BigInt(dto.actualQty) },
-                create: {
-                    storeId: storeId,
-                    variantId: dto.variantId,
-                    stockQty: BigInt(dto.actualQty)
-                }
-            });
-
-            // 4. Catat di Log hanya jika ada selisih
-            await tx.inventory_logs.create({
-                data: {
-                    inventoryStockId: stock.id,
-                    type: 'ADJUSTMENT',
-                    qtyChange: diff,
-                    notes: `Stock Opname: (Sistem: ${systemQty}, Fisik: ${dto.actualQty}). Ket: ${dto.note || '-'}`
-                }
-            });
-
-            return {
-                message: 'Stock Opname berhasil diproses',
-                systemQty,
-                actualQty: dto.actualQty,
-                difference: diff
-            };
-        });
-    }
-
     async getVariantHistory(
         tenantId: string,
         variantId: number,
@@ -422,6 +405,255 @@ export class InventoryService {
                 limit,
                 totalPages: Math.ceil(total / limit)
             }
+        };
+    }
+
+    async processOpname(tenantId: string, dto: FinalizeStockOpnameDto) {
+        if (!dto) throw new BadRequestException('DTO is missing');
+        const { storeId, items = [], auditorName } = dto;
+
+        // 1. Validasi Store
+        const store = await this.prisma.stores.findFirst({
+            where: { id: storeId, tenantId: tenantId }
+        });
+        if (!store) throw new BadRequestException('Store tidak ditemukan atau bukan milik tenant ini');
+
+        // 2. Validasi Varian secara massal
+        const variantIds = items.map(item => item.variantId);
+        const validVariants = await this.prisma.product_variants.findMany({
+            where: {
+                id: { in: variantIds },
+                product: { tenantId: tenantId }
+            }
+        });
+
+        if (validVariants.length !== items.length) {
+            throw new BadRequestException('Ada varian produk yang tidak valid atau milik tenant lain');
+        }
+
+        // 3. Transaksi Database
+        return await this.prisma.$transaction(async (tx) => {
+            const auditSummary: AuditResult[] = [];
+
+            for (const item of items) {
+                // A. Ambil stok saat ini
+                const currentStock = await tx.inventory_stock.findUnique({
+                    where: { variantId_storeId: { variantId: item.variantId, storeId } }
+                });
+
+                const systemQty = currentStock ? Number(currentStock.stockQty) : 0;
+                const diff = item.actualQty - systemQty;
+
+                // B. Update stok (Upsert)
+                const updatedStock = await tx.inventory_stock.upsert({
+                    where: { variantId_storeId: { variantId: item.variantId, storeId } },
+                    update: { stockQty: BigInt(item.actualQty) },
+                    create: {
+                        storeId,
+                        variantId: item.variantId,
+                        stockQty: BigInt(item.actualQty)
+                    }
+                });
+
+                const referenceId = await this.generateReferenceId();
+                // C. Catat ke Inventory Log
+                await tx.inventory_logs.create({
+                    data: {
+                        inventoryStockId: updatedStock.id,
+                        type: 'ADJUSTMENT',
+                        qtyChange: diff,
+                        notes: `Opname by ${auditorName}. Sys: ${systemQty}, Act: ${item.actualQty}. Note: ${item.note || '-'}`,
+                        referenceId: referenceId
+                    }
+                });
+
+                auditSummary.push({
+                    variantId: item.variantId,
+                    prevQty: systemQty,
+                    newQty: item.actualQty,
+                    diff
+                });
+            }
+
+            return auditSummary;
+        });
+    }
+
+    async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
+        const { search, page = 1, limit = 10 } = query;
+        const skip = (page - 1) * limit;
+
+        // 1. Hitung total data untuk keperluan metadata pagination
+        const totalItems = await this.prisma.products.count({
+            where: {
+                tenantId,
+                type: 'PHYSICAL',
+                isActive: true,
+                ...(search && {
+                    OR: [
+                        { name: { contains: search, mode: 'insensitive' } },
+                        { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
+                    ],
+                }),
+            },
+        });
+
+        // 2. Ambil data dengan pagination
+        const products = await this.prisma.products.findMany({
+            where: {
+                tenantId,
+                type: 'PHYSICAL',
+                isActive: true,
+                ...(search && {
+                    OR: [
+                        { name: { contains: search, mode: 'insensitive' } },
+                        { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
+                    ],
+                }),
+            },
+            include: {
+                category: { select: { name: true } },
+                variants: {
+                    include: {
+                        stocks: true,
+                    },
+                },
+            },
+            skip,
+            take: limit,
+            orderBy: { name: 'asc' },
+        });
+
+        // 3. Flatten data
+        const flattenedItems = products.flatMap((product) =>
+            product.variants.map((variant) => ({
+                id: variant.id,
+                productId: product.id,
+                name: `${product.name} - ${variant.name}`,
+                sku: variant.sku,
+                category: product.category.name,
+                unitName: variant.unitName,
+                systemStock: variant.stocks.reduce((acc, s) => acc + Number(s.stockQty), 0),
+            })),
+        );
+
+        return {
+            data: flattenedItems,
+            meta: {
+                totalItems,
+                itemCount: flattenedItems.length,
+                itemsPerPage: limit,
+                totalPages: Math.ceil(totalItems / limit),
+                currentPage: page,
+            },
+        };
+    }
+
+    async getStockOpnameHistory(tenantId: string, query: GetInventoryHistoryDto) {
+        const { storeId, page = 1, limit = 10 } = query;
+        const skip = (page - 1) * limit;
+
+        // Query database
+        const [logs, total] = await Promise.all([
+            this.prisma.inventory_logs.findMany({
+                where: {
+                    type: 'ADJUSTMENT', // Khusus stock opname/adjustment
+                    inventoryStock: {
+                        store: {
+                            id: storeId, // Filter store jika ada
+                            tenantId: tenantId, // WAJIB: Keamanan data tenant
+                        },
+                    },
+                },
+                include: {
+                    inventoryStock: {
+                        include: {
+                            store: { select: { name: true } },
+                            variant: {
+                                include: {
+                                    product: { select: { name: true } },
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.inventory_logs.count({
+                where: {
+                    type: 'ADJUSTMENT',
+                    inventoryStock: {
+                        store: { id: storeId, tenantId },
+                    },
+                },
+            }),
+        ]);
+
+        // Mapping agar response lebih bersih untuk Frontend
+        const data = logs.map((log) => ({
+            id: log.id,
+            date: log.createdAt,
+            storeName: log.inventoryStock.store.name,
+            productName: log.inventoryStock.variant.product.name,
+            variantName: log.inventoryStock.variant.name,
+            sku: log.inventoryStock.variant.sku,
+            qtyChange: log.qtyChange,
+            notes: log.notes,
+        }));
+
+        return {
+            data,
+            meta: {
+                totalItems: total,
+                currentPage: page,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    async getOpnameDetailByReference(tenantId: string, referenceId: string) {
+        const logs = await this.prisma.inventory_logs.findMany({
+            where: {
+                referenceId: referenceId,
+                inventoryStock: {
+                    store: { tenantId: tenantId } // Keamanan: Pastikan milik tenant yang login
+                }
+            },
+            include: {
+                inventoryStock: {
+                    include: {
+                        store: { select: { name: true } },
+                        variant: {
+                            include: {
+                                product: { select: { name: true } }
+                            }
+                        }
+                    }
+                }
+            },
+            orderBy: { id: 'asc' }
+        });
+
+        if (logs.length === 0) {
+            throw new NotFoundException(`Riwayat opname dengan referensi ${referenceId} tidak ditemukan`);
+        }
+
+        // Formatting response agar enak dibaca Frontend
+        return {
+            referenceId: referenceId,
+            date: logs[0].createdAt,
+            storeName: logs[0].inventoryStock.store.name,
+            totalItems: logs.length,
+            details: logs.map(log => ({
+                logId: log.id,
+                productName: log.inventoryStock.variant.product.name,
+                variantName: log.inventoryStock.variant.name,
+                sku: log.inventoryStock.variant.sku,
+                qtyChange: log.qtyChange,
+                notes: log.notes
+            }))
         };
     }
 }

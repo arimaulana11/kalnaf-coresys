@@ -1,4 +1,5 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 
 export class StockTransferDto {
   @IsUUID()
@@ -16,21 +17,6 @@ export class StockTransferDto {
   @IsInt()
   @Min(1)
   qty: number;
-
-  @IsString()
-  @IsOptional()
-  note?: string;
-}
-
-export class StockOpnameDto {
-  @IsInt()
-  @IsNotEmpty()
-  variantId: number;
-
-  @IsInt()
-  @Min(0)
-  @IsNotEmpty()
-  actualQty: number; // Angka fisik yang dihitung di gudang
 
   @IsString()
   @IsOptional()
