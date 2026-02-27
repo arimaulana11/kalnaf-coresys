@@ -1,10 +1,14 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export class GetStockOpnameProductsDto {
     @IsOptional()
     @IsString()
     search?: string;
+
+    @IsNotEmpty() // Wajibkan storeId agar tidak undefined
+    @IsString()
+    storeId: string;
 
     @IsOptional()
     @Type(() => Number)

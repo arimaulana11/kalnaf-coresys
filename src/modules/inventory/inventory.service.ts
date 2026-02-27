@@ -8,6 +8,7 @@ import { StockTransferDto } from './dto/stock-movement.dto';
 import { GetStockOpnameProductsDto } from './get-stock-opname-products.dto';
 import { FinalizeStockOpnameDto } from './dto/finalize-stock-opname.dto';
 import { GetInventoryHistoryDto } from './dto/get-inventory-history.dto';
+import { isUUID } from 'class-validator';
 
 export interface AuditResult {
     variantId: number;
@@ -479,43 +480,62 @@ export class InventoryService {
         });
     }
 
-    async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
-        const { search, page = 1, limit = 10 } = query;
-        const skip = (page - 1) * limit;
+async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
+    const { search, storeId, page = 1, limit = 10 } = query;
+    const skip = (page - 1) * limit;
 
-        // 1. Hitung total data untuk keperluan metadata pagination
-        const totalItems = await this.prisma.products.count({
-            where: {
-                tenantId,
-                type: 'PHYSICAL',
-                isActive: true,
-                ...(search && {
-                    OR: [
-                        { name: { contains: search, mode: 'insensitive' } },
-                        { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
-                    ],
-                }),
-            },
-        });
+    // 1. VALIDASI UUID (Mencegah Error P2023)
+    if (!storeId || !isUUID(storeId)) {
+        console.error(`Invalid Store ID format: ${storeId}`);
+        // Jika format salah, kita kembalikan data kosong agar tidak crash
+        return { success: true, data: [], meta: { totalItems: 0 } };
+    }
 
-        // 2. Ambil data dengan pagination
+    // 2. BUILD WHERE CLAUSE
+    // Kita ingin mencari produk yang memiliki variant, 
+    // dan variant tersebut memiliki stok di storeId tertentu.
+    const whereClause: any = {
+        tenantId,
+        type: 'PHYSICAL',
+        isActive: true,
+        variants: {
+            some: {
+                stocks: {
+                    some: {
+                        storeId: storeId // Filter utama: Pastikan record stok ada di store ini
+                    }
+                }
+            }
+        },
+        ...(search && {
+            OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
+                { variants: { some: { name: { contains: search, mode: 'insensitive' } } } },
+            ],
+        }),
+    };
+
+    try {
+        const totalItems = await this.prisma.products.count({ where: whereClause });
+
         const products = await this.prisma.products.findMany({
-            where: {
-                tenantId,
-                type: 'PHYSICAL',
-                isActive: true,
-                ...(search && {
-                    OR: [
-                        { name: { contains: search, mode: 'insensitive' } },
-                        { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
-                    ],
-                }),
-            },
+            where: whereClause,
             include: {
                 category: { select: { name: true } },
                 variants: {
                     include: {
-                        stocks: true,
+                        // Filter stok agar hanya menjumlahkan qty di store ini saja
+                        stocks: {
+                            where: { storeId: storeId }
+                        },
+                        parent: {
+                            include: {
+                                stocks: {
+                                    where: { storeId: storeId }
+                                }
+                            }
+                        },
                     },
                 },
             },
@@ -524,18 +544,34 @@ export class InventoryService {
             orderBy: { name: 'asc' },
         });
 
-        // 3. Flatten data
-        const flattenedItems = products.flatMap((product) =>
-            product.variants.map((variant) => ({
-                id: variant.id,
-                productId: product.id,
-                name: `${product.name} - ${variant.name}`,
-                sku: variant.sku,
-                category: product.category.name,
-                unitName: variant.unitName,
-                systemStock: variant.stocks.reduce((acc, s) => acc + Number(s.stockQty), 0),
-            })),
-        );
+        const flattenedItems = products.flatMap((product) => {
+            return product.variants.map((variant) => {
+                const isBase = !variant.parentVariantId;
+                const multiplier = Number(variant.multiplier) || 1;
+
+                // Ambil stok yang sudah difilter per store oleh Prisma
+                const currentStocks = isBase ? variant.stocks : (variant.parent?.stocks || []);
+                const totalBaseStock = currentStocks.reduce((acc, s) => acc + Number(s.stockQty), 0);
+
+                let systemStockInUnit = isBase ? totalBaseStock : (totalBaseStock / multiplier);
+                systemStockInUnit = Math.floor(systemStockInUnit);
+
+                return {
+                    id: variant.id,
+                    productId: product.id,
+                    baseVariantId: isBase ? variant.id : variant.parentVariantId,
+                    name: `${product.name} - ${variant.name}`,
+                    sku: variant.sku,
+                    category: product.category?.name || 'Uncategorized',
+                    unitName: variant.unitName,
+                    multiplier: multiplier,
+                    isBase: isBase,
+                    baseUnitName: isBase ? variant.unitName : variant.parent?.unitName,
+                    systemStock: systemStockInUnit,
+                    systemBaseStock: totalBaseStock
+                };
+            });
+        });
 
         return {
             data: flattenedItems,
@@ -547,68 +583,86 @@ export class InventoryService {
                 currentPage: page,
             },
         };
-    }
 
+    } catch (error) {
+        console.error("Error in getProductsForOpname:", error);
+        throw error;
+    }
+}
     async getStockOpnameHistory(tenantId: string, query: GetInventoryHistoryDto) {
         const { storeId, page = 1, limit = 10 } = query;
         const skip = (page - 1) * limit;
 
-        // Query database
-        const [logs, total] = await Promise.all([
-            this.prisma.inventory_logs.findMany({
-                where: {
-                    type: 'ADJUSTMENT', // Khusus stock opname/adjustment
-                    inventoryStock: {
-                        store: {
-                            id: storeId, // Filter store jika ada
-                            tenantId: tenantId, // WAJIB: Keamanan data tenant
-                        },
+        // 1. Ambil daftar UNIQUE referenceId
+        const groups = await this.prisma.inventory_logs.groupBy({
+            by: ['referenceId'],
+            where: {
+                type: 'ADJUSTMENT',
+                referenceId: { not: null },
+                inventoryStock: {
+                    store: {
+                        ...(storeId && { id: storeId }),
+                        tenantId: tenantId,
                     },
                 },
-                include: {
-                    inventoryStock: {
-                        include: {
-                            store: { select: { name: true } },
-                            variant: {
-                                include: {
-                                    product: { select: { name: true } },
-                                },
-                            },
-                        },
-                    },
-                },
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: limit,
-            }),
-            this.prisma.inventory_logs.count({
-                where: {
-                    type: 'ADJUSTMENT',
-                    inventoryStock: {
-                        store: { id: storeId, tenantId },
-                    },
-                },
-            }),
-        ]);
+            },
+            orderBy: { referenceId: 'desc' },
+            skip,
+            take: limit,
+        });
 
-        // Mapping agar response lebih bersih untuk Frontend
-        const data = logs.map((log) => ({
-            id: log.id,
-            date: log.createdAt,
-            storeName: log.inventoryStock.store.name,
-            productName: log.inventoryStock.variant.product.name,
-            variantName: log.inventoryStock.variant.name,
-            sku: log.inventoryStock.variant.sku,
-            qtyChange: log.qtyChange,
-            notes: log.notes,
-        }));
+        // 2. Olah data per grup
+        const data = await Promise.all(
+            groups.map(async (group) => {
+                const refId = group.referenceId!;
+
+                // Ambil semua detail qtyChange untuk sesi ini
+                const logs = await this.prisma.inventory_logs.findMany({
+                    where: { referenceId: refId },
+                    select: { qtyChange: true, createdAt: true, notes: true }
+                });
+
+                // Hitung statistik mismatch
+                const shortages = logs.filter(l => l.qtyChange < 0).length; // Stok Kurang (Merah)
+                const overages = logs.filter(l => l.qtyChange > 0).length;  // Stok Lebih (Hijau)
+                const totalMismatches = shortages + overages;
+
+                // Ambil info header dari baris pertama
+                const header = logs[0];
+                const auditorName = header?.notes?.split('.')[0].replace('Opname by ', '') || 'System';
+
+                return {
+                    id: refId,
+                    date: header?.createdAt.toISOString().split('T')[0] || '-',
+                    auditor: auditorName,
+                    items: logs.length,
+                    mismatches: totalMismatches,
+                    // Tambahkan detail ini untuk mempermudah Frontend mewarnai
+                    mismatchDetails: {
+                        shortages, // Tampilkan dengan warna Merah di UI
+                        overages,  // Tampilkan dengan warna Hijau di UI
+                    },
+                    status: 'Completed',
+                };
+            })
+        );
+
+        // 3. Pagination Meta
+        const totalDistinct = await this.prisma.inventory_logs.groupBy({
+            by: ['referenceId'],
+            where: {
+                type: 'ADJUSTMENT',
+                referenceId: { not: null },
+                inventoryStock: { store: { tenantId } },
+            },
+        });
 
         return {
             data,
             meta: {
-                totalItems: total,
+                totalItems: totalDistinct.length,
                 currentPage: page,
-                totalPages: Math.ceil(total / limit),
+                totalPages: Math.ceil(totalDistinct.length / limit),
             },
         };
     }
@@ -651,7 +705,7 @@ export class InventoryService {
                 productName: log.inventoryStock.variant.product.name,
                 variantName: log.inventoryStock.variant.name,
                 sku: log.inventoryStock.variant.sku,
-                qtyChange: log.qtyChange,
+                qtyChange: Number(log.qtyChange),
                 notes: log.notes
             }))
         };

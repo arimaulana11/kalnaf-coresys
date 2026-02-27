@@ -104,8 +104,8 @@ export class InventoryController {
     @Roles('owner')
     async getProductsForOpname(
         @Req() req: AuthenticatedRequest,
-        query: GetStockOpnameProductsDto) {
-        return this.inventoryService.getProductsForOpname(req.user.tenantId, query || {});
+        @Query() query: GetStockOpnameProductsDto) {
+        return this.inventoryService.getProductsForOpname(req.user.tenantId, query);
     }
 
     @Get('stock-opname/history')
