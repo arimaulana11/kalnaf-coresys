@@ -4,11 +4,12 @@ import { PrismaService } from '../../database/prisma.service';
 import { StockLogType } from '@prisma/client';
 import { StockInDto } from './dto/stock-in.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
-import { StockTransferDto } from './dto/stock-movement.dto';
 import { GetStockOpnameProductsDto } from './get-stock-opname-products.dto';
 import { FinalizeStockOpnameDto } from './dto/finalize-stock-opname.dto';
 import { GetInventoryHistoryDto } from './dto/get-inventory-history.dto';
 import { isUUID } from 'class-validator';
+import { StockOutDto } from './dto/stock-out';
+import { TransferDto } from './dto/stock-transfer';
 
 export interface AuditResult {
     variantId: number;
@@ -69,49 +70,68 @@ export class InventoryService {
     }
 
     async processStockIn(tenantId: string, storeId: string, dto: StockInDto) {
-        // 1. CEK APAKAH VARIANT EKSIS
+        // 1. Ambil variant & kategori
         const variant = await this.prisma.product_variants.findFirst({
-            where: {
-                id: dto.variantId,
-                product: { tenantId } // Pastikan varian ini milik tenant yang login
-            }
+            where: { id: dto.variantId, product: { tenantId } },
+            include: { product: { include: { category: true } } }
         });
 
-        if (!variant) {
-            throw new BadRequestException(`Variant ID ${dto.variantId} tidak ditemukan atau bukan milik Anda.`);
-        }
+        if (!variant) throw new BadRequestException("Variant tidak ditemukan");
 
         return this.prisma.$transaction(async (tx) => {
-            // 2. LANJUTKAN UPSERT JIKA VALID
-            const stock = await tx.inventory_stock.upsert({
-                where: {
-                    variantId_storeId: {
-                        variantId: dto.variantId,
-                        storeId: storeId
-                    }
-                },
-                update: {
-                    stockQty: { increment: BigInt(dto.qty) }
-                },
-                create: {
-                    storeId: storeId,
-                    variantId: dto.variantId,
-                    stockQty: BigInt(dto.qty)
-                }
+            // 2. MENCARI HARGA MODAL LAMA (Cek dari History Terakhir)
+            const lastHistory = await tx.price_history.findFirst({
+                where: { variantId: dto.variantId },
+                orderBy: { changeDate: 'desc' }
             });
 
-            // ... record log ...
-            await tx.inventory_logs.create({
+            const oldPurchasePrice = lastHistory?.newPrice || 0;
+            const newPurchasePrice = dto.purchasePrice ?? 0;
+
+            // 3. LOGIKA MARGIN & PEMBULATAN
+            const margin = (variant.product.category as any)?.defaultMargin ?? 0.20;
+            const finalPurchasePrice = newPurchasePrice > oldPurchasePrice ? newPurchasePrice : oldPurchasePrice;
+            const suggestedUnitPrice = finalPurchasePrice * (1 + margin);
+            const roundedUnitPrice = Math.ceil(suggestedUnitPrice / 500) * 500;
+
+            // 4. UPDATE JIKA MODAL NAIK
+            if (newPurchasePrice > oldPurchasePrice) {
+                // Update Harga Jual di Master
+                await tx.product_variants.update({
+                    where: { id: dto.variantId },
+                    data: { price: roundedUnitPrice }
+                });
+
+                // Catat Ke History sebagai harga modal terbaru
+                await tx.price_history.create({
+                    data: {
+                        variantId: dto.variantId,
+                        oldPrice: oldPurchasePrice,
+                        newPrice: newPurchasePrice, // Harga modal baru
+                        notes: `Kenaikan modal. Harga jual otomatis: ${roundedUnitPrice} (Margin ${margin * 100}%)`
+                    }
+                });
+            }
+
+            // 5. UPDATE STOK & BATCH
+            const stock = await tx.inventory_stock.upsert({
+                where: { variantId_storeId: { variantId: dto.variantId, storeId: storeId } },
+                update: { stockQty: { increment: BigInt(dto.qty) } },
+                create: { storeId: storeId, variantId: dto.variantId, stockQty: BigInt(dto.qty) }
+            });
+
+            await tx.stock_batches.create({
                 data: {
                     inventoryStockId: stock.id,
-                    type: StockLogType.RESTOCK,
-                    qtyChange: dto.qty,
-                    notes: dto.notes || 'Restock manual',
-                    referenceId: dto.referenceId
+                    qty: Number(dto.qty),
+                    purchasePrice: newPurchasePrice,
+                    unitPrice: roundedUnitPrice,
+                    batchNumber: dto.referenceId,
+                    supplierId: dto.supplierId
                 }
             });
 
-            return stock;
+            return { ...stock, stockQty: stock.stockQty.toString() };
         });
     }
 
@@ -148,104 +168,6 @@ export class InventoryService {
             });
 
             return updatedStock;
-        });
-    }
-
-    async processTransfer(tenantId: string, dto: StockTransferDto) {
-        // 1. Validasi awal: Toko tidak boleh sama
-        if (dto.fromStoreId === dto.toStoreId) {
-            throw new BadRequestException('Toko asal dan tujuan tidak boleh sama');
-        }
-
-        // 2. Ambil data toko & validasi kepemilikan variant dalam satu waktu
-        // Kita lakukan ini di luar transaksi untuk mengurangi beban lock database
-        const [fromStore, toStore, variant] = await Promise.all([
-            this.prisma.stores.findUnique({ where: { id: dto.fromStoreId } }),
-            this.prisma.stores.findUnique({ where: { id: dto.toStoreId } }),
-            this.prisma.product_variants.findFirst({
-                where: {
-                    id: dto.variantId,
-                    product: { tenantId } // Security: Pastikan barang milik tenant ini
-                }
-            })
-        ]);
-
-        if (!fromStore) throw new BadRequestException('Toko asal tidak ditemukan');
-        if (!toStore) throw new BadRequestException('Toko tujuan tidak ditemukan');
-        if (!variant) throw new BadRequestException('Varian produk tidak ditemukan atau akses ditolak');
-
-        // 3. Jalankan Transaksi Atomik
-        return this.prisma.$transaction(async (tx) => {
-
-            // A. Cek ketersediaan stok di toko asal
-            const sourceStock = await tx.inventory_stock.findUnique({
-                where: {
-                    variantId_storeId: {
-                        variantId: dto.variantId,
-                        storeId: dto.fromStoreId
-                    }
-                }
-            });
-
-            // Debugging log (opsional)
-            console.log(`Pengecekan Stok di ${fromStore.name}:`, sourceStock?.stockQty.toString());
-
-            if (!sourceStock || sourceStock.stockQty < BigInt(dto.qty)) {
-                throw new BadRequestException(
-                    `Stok di ${fromStore.name} tidak cukup. Tersedia: ${sourceStock?.stockQty || 0}, Diminta: ${dto.qty}`
-                );
-            }
-
-            // B. Kurangi stok di toko asal
-            const updatedSource = await tx.inventory_stock.update({
-                where: { id: sourceStock.id },
-                data: {
-                    stockQty: { decrement: BigInt(dto.qty) }
-                }
-            });
-
-            // C. Tambah atau buat stok di toko tujuan (Upsert)
-            const targetStock = await tx.inventory_stock.upsert({
-                where: {
-                    variantId_storeId: {
-                        variantId: dto.variantId,
-                        storeId: dto.toStoreId
-                    }
-                },
-                update: {
-                    stockQty: { increment: BigInt(dto.qty) }
-                },
-                create: {
-                    storeId: dto.toStoreId,
-                    variantId: dto.variantId,
-                    stockQty: BigInt(dto.qty)
-                }
-            });
-
-            // D. Buat Audit Log untuk Toko Asal (Stok Keluar)
-            await tx.inventory_logs.create({
-                data: {
-                    inventoryStockId: updatedSource.id,
-                    type: StockLogType.TRANSFER_OUT, // Gunakan string jika enum bermasalah, atau StockLogType.TRANSFER_OUT
-                    qtyChange: -dto.qty,
-                    notes: `Transfer ke [${toStore.name}]. Ket: ${dto.note || '-'}`
-                }
-            });
-
-            // E. Buat Audit Log untuk Toko Tujuan (Stok Masuk)
-            await tx.inventory_logs.create({
-                data: {
-                    inventoryStockId: targetStock.id,
-                    type: StockLogType.TRANSFER_IN,
-                    qtyChange: dto.qty,
-                    notes: `Terima transfer dari [${fromStore.name}]. Ket: ${dto.note || '-'}`
-                }
-            });
-
-            return {
-                success: true,
-                message: `Berhasil mentransfer ${dto.qty} item dari ${fromStore.name} ke ${toStore.name}`
-            };
         });
     }
 
@@ -480,115 +402,116 @@ export class InventoryService {
         });
     }
 
-async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
-    const { search, storeId, page = 1, limit = 10 } = query;
-    const skip = (page - 1) * limit;
+    async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
+        const { search, storeId, page = 1, limit = 10 } = query;
+        const skip = (page - 1) * limit;
 
-    // 1. VALIDASI UUID (Mencegah Error P2023)
-    if (!storeId || !isUUID(storeId)) {
-        console.error(`Invalid Store ID format: ${storeId}`);
-        // Jika format salah, kita kembalikan data kosong agar tidak crash
-        return { success: true, data: [], meta: { totalItems: 0 } };
-    }
+        // 1. VALIDASI UUID (Mencegah Error P2023)
+        if (!storeId || !isUUID(storeId)) {
+            console.error(`Invalid Store ID format: ${storeId}`);
+            // Jika format salah, kita kembalikan data kosong agar tidak crash
+            return { success: true, data: [], meta: { totalItems: 0 } };
+        }
 
-    // 2. BUILD WHERE CLAUSE
-    // Kita ingin mencari produk yang memiliki variant, 
-    // dan variant tersebut memiliki stok di storeId tertentu.
-    const whereClause: any = {
-        tenantId,
-        type: 'PHYSICAL',
-        isActive: true,
-        variants: {
-            some: {
-                stocks: {
-                    some: {
-                        storeId: storeId // Filter utama: Pastikan record stok ada di store ini
+        // 2. BUILD WHERE CLAUSE
+        // Kita ingin mencari produk yang memiliki variant, 
+        // dan variant tersebut memiliki stok di storeId tertentu.
+        const whereClause: any = {
+            tenantId,
+            type: 'PHYSICAL',
+            isActive: true,
+            variants: {
+                some: {
+                    stocks: {
+                        some: {
+                            storeId: storeId // Filter utama: Pastikan record stok ada di store ini
+                        }
                     }
                 }
-            }
-        },
-        ...(search && {
-            OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
-                { variants: { some: { name: { contains: search, mode: 'insensitive' } } } },
-            ],
-        }),
-    };
+            },
+            ...(search && {
+                OR: [
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
+                    { variants: { some: { name: { contains: search, mode: 'insensitive' } } } },
+                ],
+            }),
+        };
 
-    try {
-        const totalItems = await this.prisma.products.count({ where: whereClause });
+        try {
+            const totalItems = await this.prisma.products.count({ where: whereClause });
 
-        const products = await this.prisma.products.findMany({
-            where: whereClause,
-            include: {
-                category: { select: { name: true } },
-                variants: {
-                    include: {
-                        // Filter stok agar hanya menjumlahkan qty di store ini saja
-                        stocks: {
-                            where: { storeId: storeId }
-                        },
-                        parent: {
-                            include: {
-                                stocks: {
-                                    where: { storeId: storeId }
+            const products = await this.prisma.products.findMany({
+                where: whereClause,
+                include: {
+                    category: { select: { name: true } },
+                    variants: {
+                        include: {
+                            // Filter stok agar hanya menjumlahkan qty di store ini saja
+                            stocks: {
+                                where: { storeId: storeId }
+                            },
+                            parent: {
+                                include: {
+                                    stocks: {
+                                        where: { storeId: storeId }
+                                    }
                                 }
-                            }
+                            },
                         },
                     },
                 },
-            },
-            skip,
-            take: limit,
-            orderBy: { name: 'asc' },
-        });
-
-        const flattenedItems = products.flatMap((product) => {
-            return product.variants.map((variant) => {
-                const isBase = !variant.parentVariantId;
-                const multiplier = Number(variant.multiplier) || 1;
-
-                // Ambil stok yang sudah difilter per store oleh Prisma
-                const currentStocks = isBase ? variant.stocks : (variant.parent?.stocks || []);
-                const totalBaseStock = currentStocks.reduce((acc, s) => acc + Number(s.stockQty), 0);
-
-                let systemStockInUnit = isBase ? totalBaseStock : (totalBaseStock / multiplier);
-                systemStockInUnit = Math.floor(systemStockInUnit);
-
-                return {
-                    id: variant.id,
-                    productId: product.id,
-                    baseVariantId: isBase ? variant.id : variant.parentVariantId,
-                    name: `${product.name} - ${variant.name}`,
-                    sku: variant.sku,
-                    category: product.category?.name || 'Uncategorized',
-                    unitName: variant.unitName,
-                    multiplier: multiplier,
-                    isBase: isBase,
-                    baseUnitName: isBase ? variant.unitName : variant.parent?.unitName,
-                    systemStock: systemStockInUnit,
-                    systemBaseStock: totalBaseStock
-                };
+                skip,
+                take: limit,
+                orderBy: { name: 'asc' },
             });
-        });
 
-        return {
-            data: flattenedItems,
-            meta: {
-                totalItems,
-                itemCount: flattenedItems.length,
-                itemsPerPage: limit,
-                totalPages: Math.ceil(totalItems / limit),
-                currentPage: page,
-            },
-        };
+            const flattenedItems = products.flatMap((product) => {
+                return product.variants.map((variant) => {
+                    const isBase = !variant.parentVariantId;
+                    const multiplier = Number(variant.multiplier) || 1;
 
-    } catch (error) {
-        console.error("Error in getProductsForOpname:", error);
-        throw error;
+                    // Ambil stok yang sudah difilter per store oleh Prisma
+                    const currentStocks = isBase ? variant.stocks : (variant.parent?.stocks || []);
+                    const totalBaseStock = currentStocks.reduce((acc, s) => acc + Number(s.stockQty), 0);
+
+                    let systemStockInUnit = isBase ? totalBaseStock : (totalBaseStock / multiplier);
+                    systemStockInUnit = Math.floor(systemStockInUnit);
+
+                    return {
+                        id: variant.id,
+                        productId: product.id,
+                        baseVariantId: isBase ? variant.id : variant.parentVariantId,
+                        name: `${product.name} - ${variant.name}`,
+                        sku: variant.sku,
+                        category: product.category?.name || 'Uncategorized',
+                        unitName: variant.unitName,
+                        multiplier: multiplier,
+                        isBase: isBase,
+                        baseUnitName: isBase ? variant.unitName : variant.parent?.unitName,
+                        systemStock: systemStockInUnit,
+                        systemBaseStock: totalBaseStock
+                    };
+                });
+            });
+
+            return {
+                data: flattenedItems,
+                meta: {
+                    totalItems,
+                    itemCount: flattenedItems.length,
+                    itemsPerPage: limit,
+                    totalPages: Math.ceil(totalItems / limit),
+                    currentPage: page,
+                },
+            };
+
+        } catch (error) {
+            console.error("Error in getProductsForOpname:", error);
+            throw error;
+        }
     }
-}
+
     async getStockOpnameHistory(tenantId: string, query: GetInventoryHistoryDto) {
         const { storeId, page = 1, limit = 10 } = query;
         const skip = (page - 1) * limit;
@@ -709,5 +632,152 @@ async getProductsForOpname(tenantId: string, query: GetStockOpnameProductsDto) {
                 notes: log.notes
             }))
         };
+    }
+
+    async processStockOut(tenantId: string, storeId: string, dto: StockOutDto) {
+        // 1. Validasi keberadaan variant
+        const variant = await this.prisma.product_variants.findFirst({
+            where: { id: dto.variantId, product: { tenantId } },
+        });
+
+        console.log(dto.variantId, tenantId)
+
+        if (!variant) throw new BadRequestException("Variant tidak ditemukan");
+
+        return this.prisma.$transaction(async (tx) => {
+            // 2. Cek stok yang tersedia di toko tersebut
+            const stock = await tx.inventory_stock.findUnique({
+                where: {
+                    variantId_storeId: { variantId: dto.variantId, storeId: storeId }
+                }
+            });
+
+            if (!stock || Number(stock.stockQty) < dto.qty) {
+                throw new BadRequestException(`Stok tidak cukup. Tersedia: ${stock?.stockQty || 0}`);
+            }
+
+            // 3. KURANGI STOK UTAMA (Main Stock)
+            const updatedStock = await tx.inventory_stock.update({
+                where: { id: stock.id },
+                data: {
+                    stockQty: { decrement: BigInt(dto.qty) }
+                }
+            });
+
+            // 4. LOGIKA FIFO (Opsional tapi Rekomendasi): Mengurangi Qty di tabel stock_batches
+            // Kita cari batch yang masih punya qty > 0, urutkan dari yang terlama (ASC)
+            let remainingToReduce = dto.qty;
+            const activeBatches = await tx.stock_batches.findMany({
+                where: { inventoryStockId: stock.id, qty: { gt: 0 } },
+                orderBy: { createdAt: 'asc' }
+            });
+
+            for (const batch of activeBatches) {
+                if (remainingToReduce <= 0) break;
+
+                const reduction = Math.min(batch.qty, remainingToReduce);
+
+                await tx.stock_batches.update({
+                    where: { id: batch.id },
+                    data: { qty: { decrement: reduction } }
+                });
+
+                remainingToReduce -= reduction;
+            }
+
+            // 5. PENCATATAN LOG INVENTARIS
+            await tx.inventory_logs.create({
+                data: {
+                    inventoryStockId: stock.id,
+                    type: dto.type as StockLogType, // Bisa SALE, WASTE, atau EXPIRED
+                    qtyChange: -Number(dto.qty), // Simpan sebagai angka negatif untuk keluar
+                    referenceId: dto.referenceId,
+                    notes: dto.notes || `Stok Keluar: ${dto.qty} unit (${dto.type})`,
+                }
+            });
+
+            return {
+                ...updatedStock,
+                stockQty: updatedStock.stockQty.toString()
+            };
+        });
+    }
+
+    async transferStock(tenantId: string, fromStoreId: string, dto: TransferDto) {
+        // 1. Validasi awal untuk memastikan variant ada dan milik tenant yang benar
+        const variant = await this.prisma.product_variants.findFirst({
+            where: {
+                id: dto.variantId,
+                product: { tenantId }
+            }
+        });
+
+        if (!variant) throw new BadRequestException("Produk tidak ditemukan");
+
+        return this.prisma.$transaction(async (tx) => {
+            // 2. Ambil atau buat data stok di Gudang Asal (Source)
+            // Kita gunakan update untuk mengurangi stok asal
+            const sourceStock = await tx.inventory_stock.update({
+                where: {
+                    variantId_storeId: {
+                        variantId: dto.variantId,
+                        storeId: fromStoreId
+                    }
+                },
+                data: {
+                    stockQty: { decrement: BigInt(dto.qty) }
+                }
+            });
+
+            // Validasi sederhana: Pastikan stok tidak negatif setelah dikurangi
+            if (sourceStock.stockQty < BigInt(0)) {
+                throw new BadRequestException("Stok di gudang asal tidak mencukupi");
+            }
+
+            // 3. Tambah stok di Gudang Tujuan (Destination) menggunakan Upsert
+            const destStock = await tx.inventory_stock.upsert({
+                where: {
+                    variantId_storeId: {
+                        variantId: dto.variantId,
+                        storeId: dto.toStoreId
+                    }
+                },
+                update: {
+                    stockQty: { increment: BigInt(dto.qty) }
+                },
+                create: {
+                    variantId: dto.variantId,
+                    storeId: dto.toStoreId,
+                    stockQty: BigInt(dto.qty)
+                }
+            });
+
+            // 4. Catat Log Inventaris (Log Ganda: Keluar dan Masuk)
+            await tx.inventory_logs.createMany({
+                data: [
+                    {
+                        inventoryStockId: sourceStock.id,
+                        type: 'TRANSFER_OUT',
+                        qtyChange: -dto.qty,
+                        referenceId: dto.referenceId,
+                        notes: `Transfer ke: ${dto.toStoreId}. ${dto.notes || ''}`
+                    },
+                    {
+                        inventoryStockId: destStock.id,
+                        type: 'TRANSFER_IN',
+                        qtyChange: dto.qty,
+                        referenceId: dto.referenceId,
+                        notes: `Transfer dari: ${fromStoreId}. ${dto.notes || ''}`
+                    }
+                ]
+            });
+
+            // 5. Return hasil dengan konversi BigInt ke String agar aman dikirim ke Frontend
+            return {
+                message: "Transfer berhasil",
+                sourceStockQty: sourceStock.stockQty.toString(),
+                destStockQty: destStock.stockQty.toString()
+            };
+        });
     }
 }

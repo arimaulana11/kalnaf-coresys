@@ -9,7 +9,8 @@ import {
     Headers as NestHeaders,
     Param,
     ParseIntPipe,
-    BadRequestException
+    BadRequestException,
+    Headers
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { JwtGuard } from '../../common/guards/jwt.guard';
@@ -18,10 +19,11 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../auth/interface/auth-user.interface';
 import { StockInDto } from './dto/stock-in.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
-import { StockTransferDto } from './dto/stock-movement.dto';
 import { GetStockOpnameProductsDto } from './get-stock-opname-products.dto';
 import { FinalizeStockOpnameDto } from './dto/finalize-stock-opname.dto';
 import { GetInventoryHistoryDto, GetOpnameDetailParamDto } from './dto/get-inventory-history.dto';
+import { StockOutDto } from './dto/stock-out';
+import { TransferDto } from './dto/stock-transfer';
 
 interface AuthenticatedRequest extends Request {
     user: AuthUser;
@@ -52,6 +54,49 @@ export class InventoryController {
         return this.inventoryService.processStockIn(req.user.tenantId, storeId, dto);
     }
 
+    @Post('stock-out')
+    @Roles('owner')
+    async handleStockOut(
+        @Req() req: AuthenticatedRequest,
+        @Headers('store-id') storeId: string,
+        @Body() dto: StockOutDto
+    ) {
+        const tenantId = req.user.tenantId; // Proteksi Multi-tenant
+
+        // Validasi sederhana: tipe harus WASTE, EXPIRED, atau DAMAGE
+        const allowedTypes = ['WASTE', 'EXPIRED', 'DAMAGE', 'LOST'];
+        if (!allowedTypes.includes(dto.type)) {
+            throw new BadRequestException('Tipe pengeluaran tidak valid (Gunakan WASTE/EXPIRED)');
+        }
+
+        return this.inventoryService.processStockOut(tenantId, storeId, dto);
+    }
+
+    /**
+     * ENDPOINT: TRANSFER STOK
+     * Digunakan untuk memindahkan barang antar cabang/gudang
+     */
+    @Post('transfer')
+    async handleTransfer(
+        @Req() req: AuthenticatedRequest,
+        @Headers('store-id') fromStoreId: string,
+        @Body() dto: TransferDto
+    ) {
+        const tenantId = req.user.tenantId;
+
+        // Proteksi: Tidak boleh transfer ke lokasi yang sama
+        if (fromStoreId === dto.toStoreId) {
+            throw new BadRequestException('Gudang asal dan tujuan tidak boleh sama');
+        }
+
+        // Proteksi: Jumlah harus lebih dari 0
+        if (dto.qty <= 0) {
+            throw new BadRequestException('Jumlah transfer harus lebih dari 0');
+        }
+
+        return this.inventoryService.transferStock(tenantId, fromStoreId, dto);
+    }
+
     @Post('adjustment')
     @Roles('owner')
     async adjustStock(
@@ -76,15 +121,6 @@ export class InventoryController {
             page ? Number(page) : 1,
             limit ? Number(limit) : 10
         );
-    }
-
-    @Post('transfer')
-    @Roles('owner')
-    async transferStock(
-        @Req() req: AuthenticatedRequest,
-        @Body() dto: StockTransferDto,
-    ) {
-        return this.inventoryService.processTransfer(req.user.tenantId, dto);
     }
 
     @Post('stock-opname/finalize')
@@ -127,6 +163,8 @@ export class InventoryController {
         const tenantId = req.user.tenantId;
         return this.inventoryService.getOpnameDetailByReference(tenantId, params.referenceId);
     }
+
+
 
     @Get('history/:variantId')
     @Roles('owner')

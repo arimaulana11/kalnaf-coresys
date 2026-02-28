@@ -30,4 +30,8 @@ export class StockInDto {
   // Jika Anda mengirim storeId di BODY (bukan di Header)
   @IsOptional()
   referenceId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  supplierId?: string;
 }

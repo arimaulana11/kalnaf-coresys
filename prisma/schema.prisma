@@ -31,6 +31,8 @@ enum StockLogType {
   VOID_RESTORE
   BUNDLE_UNPACK
   EXPIRED
+  DAMAGE
+  LOST
 }
 
 enum TransactionSource {
