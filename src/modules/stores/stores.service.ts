@@ -78,7 +78,15 @@ export class StoresService {
 
         return this.prisma.stores.update({
             where: { id },
-            data: dto,
+            data: {
+                name: dto.name,
+                address: dto.address,
+                phone: dto.phone,
+                receiptHeader: dto.receipt_header, 
+                receiptFooter: dto.receipt_footer, 
+                logoUrl: dto.logo_url,             
+                isActive: dto.is_active,           
+            },
         });
     }
 
