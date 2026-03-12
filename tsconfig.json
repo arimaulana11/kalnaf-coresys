@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "resolveJsonModule": true,
     "module": "commonjs", // Ubah dari nodenext ke commonjs untuk stabilitas NestJS
     "declaration": true,
     "removeComments": true,
@@ -20,6 +21,6 @@
       "@prisma/client": ["generated/prisma"] 
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "google-auth.json"],
   "exclude": ["node_modules", "dist", "generated"] 
 }
