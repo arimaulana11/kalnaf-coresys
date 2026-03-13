@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Res, Req, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, Res, Req, UnauthorizedException, HttpCode, HttpStatus, BadRequestException, NotFoundException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -18,6 +18,23 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return this.authService.verifyOtp(verifyOtpDto);
+  }
+
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  async resendOtp(@Body('email') email: string) {
+    if (!email) {
+      throw new BadRequestException('Email wajib diisi');
+    }
+
+    try {
+      return await this.authService.resendOtp(email);
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException('Gagal mengirim ulang OTP, silakan coba lagi nanti');
+    }
   }
 
   @Post('login')

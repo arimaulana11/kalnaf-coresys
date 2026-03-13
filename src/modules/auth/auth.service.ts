@@ -1,11 +1,11 @@
-import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { v4 as uuidv4 } from 'uuid';
-import { MailService } from 'src/mail/mail.service';
+import { MailService } from '../../mail/mail.service';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 
 @Injectable()
@@ -77,13 +77,13 @@ export class AuthService {
 
     async verifyOtp(dto: VerifyOtpDto) {
         const { email, otp } = dto;
-        
+
         const user = await this.prisma.users.findFirst({
             where: {
                 email,
                 verificationOtp: otp,
                 otpExpiresAt: {
-                    gt: new Date(), 
+                    gt: new Date(),
                 },
             },
         });
@@ -97,7 +97,7 @@ export class AuthService {
             data: {
                 isVerified: true,
                 verificationOtp: null,
-                otpExpiresAt: null,   
+                otpExpiresAt: null,
             },
         });
 
@@ -107,8 +107,65 @@ export class AuthService {
         };
     }
 
+    async resendOtp(email: string) {
+        // 1. Cari user berdasarkan email
+        const user = await this.prisma.users.findUnique({
+            where: { email }
+        });
+
+        // 2. Validasi dasar
+        if (!user) {
+            throw new NotFoundException('User tidak ditemukan');
+        }
+        if (user.isVerified) {
+            throw new BadRequestException('Email sudah terverifikasi, silakan login');
+        }
+
+        const now = new Date();
+
+        // 3. PROTEKSI: Cek apakah OTP lama masih aktif
+        if (user.otpExpiresAt && user.otpExpiresAt > now) {
+            // Hitung selisih waktu dalam milidetik, lalu konversi ke menit
+            const diffInMs = user.otpExpiresAt.getTime() - now.getTime();
+            const diffInMinutes = Math.ceil(diffInMs / 60000);
+
+            throw new BadRequestException(
+                `OTP Anda masih aktif. Silakan cek inbox atau coba lagi dalam ${diffInMinutes} menit.`
+            );
+        }
+
+        // 4. Jika sudah expired, generate OTP baru
+        const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 10); // Masa berlaku 10 menit
+
+        // 5. Update data di database
+        await this.prisma.users.update({
+            where: { email },
+            data: {
+                verificationOtp: newOtp,
+                otpExpiresAt: expiresAt,
+            },
+        });
+
+        // 6. Kirim email
+        await this.mailService.sendSystemEmail(
+            email,
+            'Kode Verifikasi Baru - Kalnaf',
+            'verifyEmail',
+            {
+                name: user.name,
+                otp_code: newOtp,
+            },
+        );
+
+        return {
+            message: "Kode OTP baru telah dikirim ke email Anda.",
+        };
+    }
+
     async login(dto: LoginDto) {
-        const user = await this.prisma.users.findUnique({ where: { email: dto.email, isVerified: true, isActive:true } });
+        const user = await this.prisma.users.findUnique({ where: { email: dto.email, isVerified: true, isActive: true } });
         if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
             throw new UnauthorizedException('Email atau password salah');
         }
