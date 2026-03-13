@@ -353,16 +353,19 @@ model store_shifts {
 // ==========================================
 
 model users {
-  id           String    @id @db.Uuid
-  tenantId     String    @map("tenant_id") @db.Uuid
-  name         String?   @db.VarChar(150)
-  email        String    @unique @db.VarChar(150)
-  passwordHash String    @map("password_hash")
-  role         String    @default("owner") @db.VarChar(50)
-  isActive     Boolean?  @default(true) @map("is_active")
-  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamp(6)
-  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime? @updatedAt @map("updated_at")
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  name            String?   @db.VarChar(150)
+  email           String    @unique @db.VarChar(150)
+  passwordHash    String    @map("password_hash")
+  isVerified      Boolean   @default(false) @map("is_verified")
+  verificationOtp String?   @map("verification_otp") @db.VarChar(100)
+  otpExpiresAt    DateTime? @map("otp_expires_at")
+  role            String    @default("owner") @db.VarChar(50)
+  isActive        Boolean?  @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamp(6)
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime? @updatedAt @map("updated_at")
 
   refreshTokens refresh_tokens[]
   transactions  transactions[]

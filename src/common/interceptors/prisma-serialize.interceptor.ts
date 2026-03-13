@@ -6,12 +6,21 @@ export class PrismaSerializeInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler) {
     return next.handle().pipe(
       map((data) => {
-        // Melakukan hal yang sama secara otomatis untuk semua response
-        return JSON.parse(
-          JSON.stringify(data, (key, value) =>
-            typeof value === 'bigint' ? value.toString() : value
-          )
-        );
+        // 1. TAMBAHKAN PENGECEKAN INI:
+        // Jika data kosong, null, atau undefined, langsung kembalikan agar tidak error
+        if (!data) return data;
+
+        // 2. Gunakan try-catch agar aplikasi tidak crash jika ada error parsing lainnya
+        try {
+          return JSON.parse(
+            JSON.stringify(data, (key, value) =>
+              typeof value === 'bigint' ? value.toString() : value
+            )
+          );
+        } catch (error) {
+          // Jika gagal parsing, kembalikan data asli
+          return data;
+        }
       }),
     );
   }

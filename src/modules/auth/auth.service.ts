@@ -1,16 +1,19 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { v4 as uuidv4 } from 'uuid';
+import { MailService } from 'src/mail/mail.service';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 
 @Injectable()
 export class AuthService {
     constructor(
         private prisma: PrismaService,
         private jwtService: JwtService,
+        private mailService: MailService,
     ) { }
 
     async register(dto: RegisterDto) {
@@ -20,6 +23,10 @@ export class AuthService {
         const hashedPassword = await bcrypt.hash(dto.password, 10);
 
         // Menggunakan Prisma Transaction agar Tenant, User, dan Store dibuat sekaligus
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
         return await this.prisma.$transaction(async (tx) => {
             const tenant = await tx.tenants.create({
                 data: { id: uuidv4(), name: dto.tenant_name },
@@ -33,6 +40,9 @@ export class AuthService {
                     email: dto.email,
                     passwordHash: hashedPassword,
                     role: 'owner',
+                    isVerified: false,
+                    verificationOtp: otp,
+                    otpExpiresAt: expiresAt
                 },
             });
 
@@ -45,16 +55,60 @@ export class AuthService {
                 },
             });
 
+            // Buat Link Verifikasi (Arahkan ke Frontend Anda)
+
+            await this.mailService.sendSystemEmail(
+                dto.email,
+                'Verifikasi Email Kalnaf',
+                'verifyEmail',
+                {
+                    name: dto.name,
+                    otp_code: otp, // Kirim variabel ini ke template .hbs
+                },
+            );
+
             return {
-                message: "Registrasi berhasil", // Ini akan ditangkap interceptor
+                message: "Registrasi berhasil, Kode OTP telah dikirim ke email Anda.", // Ini akan ditangkap interceptor
                 tenantId: user.tenantId,
                 userId: user.id,
             };
         });
     }
 
+    async verifyOtp(dto: VerifyOtpDto) {
+        const { email, otp } = dto;
+        
+        const user = await this.prisma.users.findFirst({
+            where: {
+                email,
+                verificationOtp: otp,
+                otpExpiresAt: {
+                    gt: new Date(), 
+                },
+            },
+        });
+
+        if (!user) {
+            throw new BadRequestException('Kode OTP salah atau sudah kadaluwarsa.');
+        }
+
+        await this.prisma.users.update({
+            where: { id: user.id },
+            data: {
+                isVerified: true,
+                verificationOtp: null,
+                otpExpiresAt: null,   
+            },
+        });
+
+        return {
+            statusCode: 200,
+            message: 'Akun berhasil diverifikasi. Silakan login.',
+        };
+    }
+
     async login(dto: LoginDto) {
-        const user = await this.prisma.users.findUnique({ where: { email: dto.email } });
+        const user = await this.prisma.users.findUnique({ where: { email: dto.email, isVerified: true, isActive:true } });
         if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
             throw new UnauthorizedException('Email atau password salah');
         }
